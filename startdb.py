@@ -122,9 +122,10 @@ async def load_database_from_mqtt(
     topics: list,
     mqtt_user: str | None = None,
     mqtt_passwd: str | None = None,
+    mqtt_tls : bool | None = None
 ):
     async for topic, env in mqtt_reader.get_topic_envelopes(
-        mqtt_server, mqtt_port, topics, mqtt_user, mqtt_passwd
+        mqtt_server, mqtt_port, topics, mqtt_user, mqtt_passwd, mqtt_tls
     ):
         async with db_lock:  # Block if cleanup is running
             await mqtt_store.process_envelope(topic, env)
@@ -140,6 +141,7 @@ async def main():
 
     mqtt_user = CONFIG["mqtt"].get("username") or None
     mqtt_passwd = CONFIG["mqtt"].get("password") or None
+    mqtt_tls = get_bool(CONFIG, "mqtt", "tls", False)
     mqtt_topics = json.loads(CONFIG["mqtt"]["topics"])
 
     cleanup_enabled = get_bool(CONFIG, "cleanup", "enabled", False)
@@ -156,6 +158,7 @@ async def main():
                 mqtt_topics,
                 mqtt_user,
                 mqtt_passwd,
+                mqtt_tls,
             )
         )
 

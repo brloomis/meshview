@@ -3,6 +3,7 @@ import base64
 import logging
 import random
 import time
+import ssl
 
 import aiomqtt
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -37,18 +38,25 @@ def decrypt(packet):
         pass
 
 
-async def get_topic_envelopes(mqtt_server, mqtt_port, topics, mqtt_user, mqtt_passwd):
+async def get_topic_envelopes(mqtt_server, mqtt_port, topics, mqtt_user, mqtt_passwd, mqtt_tls):
     identifier = str(random.getrandbits(16))
     msg_count = 0
     start_time = None
     while True:
         try:
+            if(mqtt_tls):
+                tls_params = aiomqtt.TLSParameters(
+                    cert_reqs=ssl.VerifyMode.CERT_REQUIRED
+                )
+            else:
+                tls_params = None
             async with aiomqtt.Client(
                 mqtt_server,
                 port=mqtt_port,
                 username=mqtt_user,
                 password=mqtt_passwd,
                 identifier=identifier,
+                tls_params=tls_params,
             ) as client:
                 logger.info(f"Connected to MQTT broker at {mqtt_server}:{mqtt_port}")
                 for topic in topics:
