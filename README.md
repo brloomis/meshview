@@ -4,6 +4,64 @@
 
 The project serves as a real-time monitoring and diagnostic tool for the Meshtastic mesh network. It provides detailed insights into network activity, including message traffic, node positions, and telemetry data.
 
+### Version 3.0.5 — February 2026
+- **IMPORTANT:** the predicted coverage feature requires the extra `pyitm` dependency. If it is not installed, the coverage API will return 503.
+  - Ubuntu install (inside the venv): `./env/bin/pip install pyitm`
+- Coverage: predicted coverage overlay (Longley‑Rice area mode) with perimeter rendering and documentation.
+- UI: added QR code display for quick node/app access.
+- Gateways: persistent gateway tracking (`is_mqtt_gateway`) and UI indicators in nodes, map popups, and stats.
+- Map UX: deterministic jitter for overlapping nodes; edges follow jittered positions.
+- Tooling: Meshtastic protobuf updater script with `--check` and `UPSTREAM_REV.txt` tracking.
+
+
+### Version 3.0.4 — Late January 2026
+- Database: multi‑DB support, PostgreSQL scripts, WAL config for SQLite, cleanup query timing fixes, removal of import time columns, and various time‑handling fixes.
+- UI/UX: extensive updates to node.html, nodelist.html, top.html, and packet.html (paging, stats, distance, status/favorites), plus net view changes to 12‑hour window.
+- API/logic: weekly mesh query fix, node list performance improvement, backwards‑compatibility and other bug fixes.
+- MQTT reader: configurable skip‑node list and secondary decryption keys.
+- Docs/ops: multiple documentation updates, updated site list, container workflow fixes/tests, README updates.
+
+### Version 3.0.2 — January 2026
+- Changes to the Database to will make it so that there is a need for space when updating to the latest. SQlite requires to rebuild the database when droping a column. ( we are droping some of the old columns) so make sure you have 1.2x the size of the db of space in your environment. Depending on how big your db is it would take a long time.
+  
+### Version 3.0.1 — December 2025
+
+#### 🌐 Multi-Language Support (i18n)
+- New `/api/lang` endpoint for serving translations  
+- Section-based translation loading (e.g., `?section=firehose`)  
+- Default language controlled via config file language section
+- JSON-based translation files for easy expansion  
+- Core pages updated to support `data-translate-lang` attributes  
+
+### 🛠 Improvements
+- Updated UI elements across multiple templates for localization readiness  
+- General cleanup to support future language additions  
+
+### Version 3.0.0 update - November 2025
+
+**Major Infrastructure Improvements:**
+
+* **Database Migrations**: Alembic integration for safe schema upgrades and database versioning
+* **Automated Backups**: Independent database backup system with gzip compression (separate from cleanup)
+* **Development Tools**: Quick setup script (`setup-dev.sh`) with pre-commit hooks for code quality
+* **Docker Support**: Pre-built containers now available on GitHub Container Registry with automatic builds - ogarcia 
+
+**New Features:**
+
+* **Traceroute Return Path**: Log and display return path data for traceroute packets - jschrempp 
+* **Microsecond Timestamps**: Added `import_time_us` columns for higher precision time tracking
+
+**Technical Improvements:**
+
+* Migration from manual SQL to Alembic-managed schema
+* Container images use `uv` for faster dependency installation
+* Python 3.13 support with slim Debian-based images
+* Documentation collection in `docs/` directory
+* API routes moved to separate modules for better organization
+* /version and /health endpoints added for monitoring
+
+See [README-Docker.md](README-Docker.md) for container deployment and [docs/](docs/) for technical documentation.
+
 ### Version 2.0.7 update - September 2025
 * New database maintenance capability to automatically keep a specific number of days of data.
 * Added configuration for update intervals for both the Live Map and the Firehose pages.
@@ -13,6 +71,7 @@ The project serves as a real-time monitoring and diagnostic tool for the Meshtas
 * New API /api/config (See API documentation)
 * New API /api/edges (See API documentation)
 * Adds edges to the map (click to see traceroute and neighbours)
+
 
 ### Version 2.0.4 update - August 2025
 * New statistic page with more data.
@@ -41,38 +100,83 @@ The project serves as a real-time monitoring and diagnostic tool for the Meshtas
 
 Samples of currently running instances:
 
-- https://meshview.bayme.sh (SF Bay Area)
-- https://www.svme.sh (Sacramento Valley)
-- https://meshview.nyme.sh   (New York)
-- https://meshview.socalmesh.org (LA Area)
-- https://map.wpamesh.net (Western Pennsylvania)
-- https://meshview.chicagolandmesh.org (Chicago)
-- https://meshview.mt.gt (Canadaverse)
+- https://meshview.bayme.sh (SF Bay Area - USA)
+- https://www.svme.sh (Sacramento Valley - USA)
+- https://meshview.nyme.sh (New York - USA)
+- https://meshview.socalmesh.org (Los Angenles - USA)
+- https://map.wpamesh.net (Western Pennsylvania - USA)
+- https://meshview.chicagolandmesh.org (Chicago - USA)
+- https://meshview.freq51.net/ (Salt Lake City - USA)
+- https://meshview.mt.gt (Canada)
+- https://canadaverse.org (Canada)
 - https://meshview.meshtastic.es (Spain)
-- https://view.mtnme.sh (North Georgia / East Tennessee)
+- https://view.mtnme.sh (North Georgia / East Tennessee - USA)
 - https://meshview.lsinfra.de (Hessen - Germany)
-- https://map.nswmesh.au (Sydney - Australia)
-- https://meshview.pvmesh.org (Pioneer Valley, Massachusetts)
-- https://meshview.louisianamesh.org (Louisiana)
-- https://meshview.meshcolombia.co/ (Colombia)
+- https://meshview.pvmesh.org (Pioneer Valley, Massachusetts - USA)
+- https://meshview.louisianamesh.org (Louisiana - USA)
+- https://www.swlamesh.com (Southwest Louisiana- USA)
+- https://meshview.meshcolombia.co (Colombia)
+- https://meshview-salzburg.jmt.gr (Salzburg / Austria)
+- https://map.cromesh.eu (Coatia)
+- https://view.meshdresden.eu (Dresden / Germany)
+- https://meshview.meshoregon.com (Oregon - USA)
+- https://meshview.gamesh.net (Georgia - USA)
+
 ---
+
+
+
+### Updating from 2.x to 3.x
+We are adding the use of Alembic. If using GitHub
+Update your codebase by running the pull command
+```bash
+cd meshview
+git pull origin master
+```
+Install Alembic in your environment
+```bash
+./env/bin/pip install alembic
+```
+Start your scripts or services. This process will update your database with the latest schema.
 
 ## Installing
 
-Requires **`python3.11`** or above.
+### Using Docker (Recommended)
+
+The easiest way to run MeshView is using Docker. Pre-built images are available from GitHub Container Registry.
+
+See **[README-Docker.md](README-Docker.md)** for complete Docker installation and usage instructions.
+
+### Manual Installation
+
+Requires **`python3.13`** or above.
 
 Clone the repo from GitHub:
 
 ```bash
 git clone https://github.com/pablorevilla-meshtastic/meshview.git
-```
-
-```bash
 cd meshview
 ```
+
+#### Quick Setup (Recommended)
+
+Run the development setup script:
+
+```bash
+./setup-dev.sh
+```
+
+This will:
+- Create Python virtual environment
+- Install all requirements
+- Install development tools (pre-commit, pytest)
+- Set up pre-commit hooks for code formatting
+- Create config.ini from sample
+
+#### Manual Setup
+
 Create a Python virtual environment:
 
-from the meshview directory...
 ```bash
 python3 -m venv env
 ```
@@ -135,6 +239,9 @@ acme_challenge =
 # The domain name of your site.
 domain =
 
+# Select language (this represents the name of the json file in the /lang directory)
+language = es
+
 # Site title to show in the browser title bar and headers.
 title = Bay Area Mesh
 
@@ -192,7 +299,10 @@ password = large4cats
 # Database Configuration
 # -------------------------
 [database]
-# SQLAlchemy connection string. This one uses SQLite with asyncio support.
+# SQLAlchemy async connection string.
+# Examples:
+#   sqlite+aiosqlite:///packets.db
+#   postgresql+asyncpg://user:pass@host:5432/meshview
 connection_string = sqlite+aiosqlite:///packets.db
 
 
@@ -220,9 +330,25 @@ vacuum = False
 # Application logs (errors, startup messages, etc.) are unaffected
 # Set to True to enable, False to disable (default: False)
 access_log = False
+# Database cleanup logfile location
+db_cleanup_logfile = dbcleanup.log
 ```
 
 ---
+
+## NOTE (PostgreSQL setup)**  
+If you want to use PostgreSQL instead of SQLite:
+
+Install PostgreSQL for your OS.  
+Create a user and database:
+```
+`CREATE USER meshview WITH PASSWORD 'change_me';`
+`CREATE DATABASE meshview OWNER meshview;`
+```
+Update `config.ini` example:
+```
+`connection_string = postgresql+asyncpg://meshview:change_me@localhost:5432/meshview`
+```
 
 ## Running Meshview
 
@@ -253,10 +379,27 @@ Open in your browser: http://localhost:8081/
 ## Running Meshview with `mvrun.py`
 
 - `mvrun.py` starts both `startdb.py` and `main.py` in separate threads and merges the output.
-- It accepts the `--config` argument like the others.
+- It accepts several command-line arguments for flexible deployment.
 
 ```bash
 ./env/bin/python mvrun.py
+```
+
+**Command-line options:**
+- `--config CONFIG` - Path to the configuration file (default: `config.ini`)
+- `--pid_dir PID_DIR` - Directory for PID files (default: `.`)
+- `--py_exec PY_EXEC` - Path to the Python executable (default: `./env/bin/python`)
+
+**Examples:**
+```bash
+# Use a specific config file
+./env/bin/python mvrun.py --config /etc/meshview/config.ini
+
+# Store PID files in a specific directory
+./env/bin/python mvrun.py --pid_dir /var/run/meshview
+
+# Use a different Python executable
+./env/bin/python mvrun.py --py_exec /usr/bin/python3
 ```
 
 ---
@@ -364,18 +507,26 @@ hour = 2
 minute = 00
 # Run VACUUM after cleanup
 vacuum = False
+
+# -------------------------
+# Logging Configuration
+# -------------------------
+[logging]
+# Enable or disable HTTP access logs from the web server
+access_log = False
+# Database cleanup logfile location
+db_cleanup_logfile = dbcleanup.log
 ```
 Once changes are done you need to restart the script for changes to load.
 
-### Alternatively we can do it via your OS 
+### Alternatively we can do it via your OS (This example is Ubuntu like OS)
 - Create and save bash script below. (Modify /path/to/file/ to the correct path)
 - Name it cleanup.sh
 - Make it executable.
 ```bash
- #!/bin/bash
+#!/bin/bash
 
 DB_FILE="/path/to/file/packets.db"
-
 
 # Stop DB service
 sudo systemctl stop meshview-db.service
@@ -385,10 +536,22 @@ sleep 5
 echo "Run cleanup..."
 # Run cleanup queries
 sqlite3 "$DB_FILE" <<EOF 
-DELETE FROM packet WHERE import_time < datetime('now', '-14 day');
-DELETE FROM packet_seen WHERE import_time < datetime('now', '-14 day');
-DELETE FROM traceroute WHERE import_time < datetime('now', '-14 day');
-DELETE FROM node WHERE last_update < datetime('now', '-14 day') OR last_update IS NULL OR last_update = '';
+DELETE FROM packet
+WHERE import_time_us IS NOT NULL
+  AND import_time_us < (strftime('%s','now','-14 days') * 1000000);
+SELECT 'packet deleted: ' || changes();
+DELETE FROM packet_seen
+WHERE import_time_us IS NOT NULL
+  AND import_time_us < (strftime('%s','now','-14 days') * 1000000);
+SELECT 'packet_seen deleted: ' || changes();
+DELETE FROM traceroute
+WHERE import_time_us IS NOT NULL
+  AND import_time_us < (strftime('%s','now','-14 days') * 1000000);
+SELECT 'traceroute deleted: ' || changes();
+DELETE FROM node
+WHERE last_seen_us IS NULL
+   OR last_seen_us < (strftime('%s','now','-14 days') * 1000000);
+SELECT 'node deleted: ' || changes();
 VACUUM;
 EOF
 
@@ -398,6 +561,80 @@ sudo systemctl start meshview-web.service
 
 echo "Database cleanup completed on $(date)"
 
+```
+- If you are using PostgreSQL, use this version instead (adjust credentials/DB name):
+```bash
+#!/bin/bash
+set -euo pipefail
+
+DB="postgresql://meshview@localhost:5432/meshview"
+RETENTION_DAYS=14
+BATCH_SIZE=100
+
+PSQL="/usr/bin/psql"
+
+echo "[$(date)] Starting batched cleanup..."
+
+while true; do
+  DELETED=$(
+    $PSQL "$DB" -At -v ON_ERROR_STOP=1 <<EOF
+WITH cutoff AS (
+  SELECT (EXTRACT(EPOCH FROM (NOW() - INTERVAL '${RETENTION_DAYS} days')) * 1000000)::bigint AS ts
+),
+old_packets AS (
+  SELECT id
+  FROM packet, cutoff
+  WHERE import_time_us IS NOT NULL
+    AND import_time_us < cutoff.ts
+  ORDER BY id
+  LIMIT ${BATCH_SIZE}
+),
+ps_del AS (
+  DELETE FROM packet_seen
+  WHERE packet_id IN (SELECT id FROM old_packets)
+  RETURNING 1
+),
+tr_del AS (
+  DELETE FROM traceroute
+  WHERE packet_id IN (SELECT id FROM old_packets)
+  RETURNING 1
+),
+p_del AS (
+  DELETE FROM packet
+  WHERE id IN (SELECT id FROM old_packets)
+  RETURNING 1
+)
+SELECT COUNT(*) FROM p_del;
+EOF
+  )
+
+  if [[ "$DELETED" -eq 0 ]]; then
+    break
+  fi
+  
+  sleep 0.1
+done
+
+echo "[$(date)] Packet cleanup complete"
+
+echo "[$(date)] Cleaning old nodes..."
+
+$PSQL "$DB" -v ON_ERROR_STOP=1 <<EOF
+DELETE FROM node
+WHERE last_seen_us IS NOT NULL
+  AND last_seen_us < (
+    EXTRACT(EPOCH FROM (NOW() - INTERVAL '${RETENTION_DAYS} days')) * 1000000
+  );
+EOF
+
+echo "[$(date)] Node cleanup complete"
+
+$PSQL "$DB" -c "VACUUM (ANALYZE) packet_seen;"
+$PSQL "$DB" -c "VACUUM (ANALYZE) traceroute;"
+$PSQL "$DB" -c "VACUUM (ANALYZE) packet;"
+$PSQL "$DB" -c "VACUUM (ANALYZE) node;"
+
+echo "[$(date)] Cleanup finished"
 ```
 - Schedule running the script on a regular basis. 
 - In this example it runs every night at 2:00am.
@@ -412,3 +649,20 @@ Add schedule to the bottom of the file (modify /path/to/file/ to the correct pat
 ```
 
 Check the log file to see it the script run at the specific time.
+
+---
+
+## Testing
+
+MeshView includes a test suite using pytest. For detailed testing documentation, see [README-testing.md](README-testing.md).
+
+Quick start:
+```bash
+./env/bin/pytest tests/test_api_simple.py -v
+```
+
+---
+
+## Technical Documentation
+
+For more detailed technical documentation including database migrations, architecture details, and advanced topics, see the [docs/](docs/) directory.

@@ -1,12 +1,31 @@
 {% extends "base.html" %}
 
 {% block css %}
+<style>
+    html, body {
+    overflow-x: auto !important;
+}
+
 table {
-    width: 80%;
+    /* FIX: allow table to keep natural width so scrolling works */
+    width: max-content;
+    min-width: 100%;
     border-collapse: collapse;
     margin: 1em auto;
 }
 
+/* Desktop scroll wrapper */
+#node-list {
+    width: 100%;
+    overflow-x: auto;     /* allows horizontal scroll */
+    overflow-y: hidden;
+    /* !!! removed display:flex because it prevents scrolling */
+}
+
+#node-list table {
+    width: max-content;   /* table keeps its natural width */
+    min-width: 100%;      /* won't shrink smaller than viewport */
+}
 th, td {
     padding: 10px;
     border: 1px solid #333;
@@ -84,7 +103,23 @@ select, .export-btn, .search-box, .clear-btn {
     font-weight: bold;
     color: white;
 }
+.node-status {
+    margin-left: 10px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    border: 1px solid #2a6a8a;
+    background: #0d2a3a;
+    color: #9fd4ff;
+    font-size: 0.9em;
+    display: inline-block;
+    opacity: 0;
+    transition: opacity 0.15s ease-in-out;
+}
+.node-status.active {
+    opacity: 1;
+}
 
+/* Favorite stars */
 .favorite-star {
     cursor: pointer;
     font-size: 1.2em;
@@ -100,6 +135,7 @@ select, .export-btn, .search-box, .clear-btn {
     color: #ffd700;
 }
 
+/* Favorite filter button */
 .favorites-btn {
     background-color: #ffd700;
     color: #000;
@@ -114,257 +150,521 @@ select, .export-btn, .search-box, .clear-btn {
     background-color: #ff6b6b;
     color: white;
 }
+
+/* --------------------------------------------- */
+/* MOBILE CARD VIEW */
+/* --------------------------------------------- */
+@media (max-width: 768px) {
+
+    /* Hide desktop view */
+    #node-list table {
+        display: none;
+    }
+
+    /* Show mobile cards */
+    #mobile-node-list {
+        display: block !important;
+        width: 100%;
+        padding: 0 10px;
+
+        /* If you want horizontal swiping, uncomment:
+        overflow-x: auto;
+        white-space: nowrap; */
+    }
+
+    .node-card {
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 12px 15px;
+        margin-bottom: 12px;
+        color: white;
+    }
+
+    .node-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 1.2em;
+        font-weight: bold;
+        margin-bottom: 8px;
+    }
+
+    .node-card-field {
+        margin: 4px 0;
+        font-size: 0.9em;
+    }
+
+    .node-card-field b {
+        color: #9fd4ff;
+    }
+
+    .favorite-star {
+        font-size: 1.4em;
+    }
+}
+</style>
 {% endblock %}
 
 {% block body %}
 <div class="filter-container">
-    <input type="text" id="search-box" class="search-box" placeholder="Search by name or ID..." />
+
+    <input
+        type="text"
+        id="search-box"
+        class="search-box"
+        data-translate-lang="search_placeholder"
+        placeholder="Search by name or ID or HEX ID..."
+    />
 
     <select id="role-filter">
-        <option value="">All Roles</option>
+        <option value="" data-translate-lang="all_roles">All Roles</option>
     </select>
 
     <select id="channel-filter">
-        <option value="">All Channels</option>
+        <option value="" data-translate-lang="all_channels">All Channels</option>
     </select>
 
     <select id="hw-filter">
-        <option value="">All HW Models</option>
+        <option value="" data-translate-lang="all_hw">All HW Models</option>
     </select>
 
     <select id="firmware-filter">
-        <option value="">All Firmware</option>
+        <option value="" data-translate-lang="all_firmware">All Firmware</option>
     </select>
 
-    <button class="favorites-btn" id="favorites-btn">⭐ Show Favorites</button>
-    <button class="export-btn" id="export-btn">Export CSV</button>
-    <button class="clear-btn" id="clear-btn">Clear Filters</button>
+    <button class="favorites-btn" id="favorites-btn" data-translate-lang="show_favorites">
+        ⭐ Show Favorites
+    </button>
+
+    <button class="export-btn" id="export-btn" data-translate-lang="export_csv">
+        Export CSV
+    </button>
+
+    <button class="clear-btn" id="clear-btn" data-translate-lang="clear_filters">
+        Clear Filters
+    </button>
 </div>
 
 <div class="count-container">
-    Showing <span id="node-count">0</span> nodes
+    <span data-translate-lang="showing_nodes">Showing</span>
+    <span id="node-count">0</span>
+    <span data-translate-lang="nodes_suffix">nodes</span>
+    <span id="node-status" class="node-status" aria-live="polite"></span>
 </div>
 
+<!-- Desktop table -->
 <div id="node-list">
     <table>
         <thead>
             <tr>
-                <th>Short<span class="sort-icon">▲</span></th>
-                <th>Long Name <span class="sort-icon"></span></th>
-                <th>HW Model <span class="sort-icon"></span></th>
-                <th>Firmware <span class="sort-icon"></span></th>
-                <th>Role <span class="sort-icon"></span></th>
-                <th>Last Latitude <span class="sort-icon"></span></th>
-                <th>Last Longitude <span class="sort-icon"></span></th>
-                <th>Channel <span class="sort-icon"></span></th>
-                <th>Last Update <span class="sort-icon"></span></th>
-                <th>Favorite</th>
+                <th data-translate-lang="short_name">Short <span class="sort-icon">▲</span></th>
+                <th data-translate-lang="long_name">Long Name <span class="sort-icon"></span></th>
+                <th data-translate-lang="hw_model">HW Model <span class="sort-icon"></span></th>
+                <th data-translate-lang="firmware">Firmware <span class="sort-icon"></span></th>
+                <th data-translate-lang="role">Role <span class="sort-icon"></span></th>
+                <th data-translate-lang="last_lat">Last Latitude <span class="sort-icon"></span></th>
+                <th data-translate-lang="last_long">Last Longitude <span class="sort-icon"></span></th>
+                <th data-translate-lang="channel">Channel <span class="sort-icon"></span></th>
+                <th data-translate-lang="mqtt_gateway">MQTT <span class="sort-icon"></span></th>
+                <th data-translate-lang="last_seen">Last Seen <span class="sort-icon"></span></th>
+                <th data-translate-lang="favorite"></th>
             </tr>
         </thead>
         <tbody id="node-table-body">
-            <tr><td colspan="9" style="text-align:center; color:white;">Loading nodes...</td></tr>
+            <tr>
+                <td colspan="11" style="text-align:center; color:white;" data-translate-lang="loading_nodes">
+                    Loading nodes...
+                </td>
+            </tr>
         </tbody>
     </table>
 </div>
 
+<!-- Mobile Card View -->
+<div id="mobile-node-list" style="display:none;"></div>
+
 <script>
-let allNodes = [];
-let sortColumn = "short_name"; // default sorted column
-let sortAsc = true; // default ascending
-let showOnlyFavorites = false;
+// =====================================================
+// TRANSLATIONS
+// =====================================================
+let nodelistTranslations = {};
 
-// Declare headers and keyMap BEFORE any function that uses them
-const headers = document.querySelectorAll("thead th");
-const keyMap = ["short_name","long_name","hw_model","firmware","role","last_lat","last_long","channel","last_update"];
-
-// LocalStorage functions for favorites
-function getFavorites() {
-    const favorites = localStorage.getItem('nodelist_favorites');
-    return favorites ? JSON.parse(favorites) : [];
+function applyTranslationsNodelist() {
+    document.querySelectorAll("[data-translate-lang]").forEach(el => {
+        const key = el.dataset.translateLang;
+        if (nodelistTranslations[key]) {
+            if (el.tagName === "INPUT" && el.placeholder) {
+                el.placeholder = nodelistTranslations[key];
+            } else {
+                el.textContent = nodelistTranslations[key];
+            }
+        }
+    });
 }
 
-function saveFavorites(favorites) {
-    localStorage.setItem('nodelist_favorites', JSON.stringify(favorites));
-}
-
-function toggleFavorite(nodeId) {
-    let favorites = getFavorites();
-    const index = favorites.indexOf(nodeId);
-    if (index > -1) {
-        favorites.splice(index, 1);
-    } else {
-        favorites.push(nodeId);
+async function loadTranslationsNodelist() {
+    try {
+        const cfg = await window._siteConfigPromise;
+        const lang = cfg?.site?.language || "en";
+        const res = await fetch(`/api/lang?lang=${lang}&section=nodelist`);
+        nodelistTranslations = await res.json();
+        applyTranslationsNodelist();
+    } catch (err) {
+        console.error("Failed to load nodelist translations:", err);
     }
-    saveFavorites(favorites);
-    applyFilters();
 }
 
+// =====================================================
+// GLOBALS
+// =====================================================
+let allNodes = [];
+let sortColumn = "short_name";
+let sortAsc = true;
+let showOnlyFavorites = false;
+let favoritesSet = new Set();
+let isBusy = false;
+let statusHideTimer = null;
+let statusShownAt = 0;
+const minStatusMs = 300;
+
+const headers = document.querySelectorAll("thead th");
+const keyMap = [
+    "short_name","long_name","hw_model","firmware","role",
+    "last_lat","last_long","channel","is_mqtt_gateway","last_seen_us"
+];
+
+function debounce(fn, delay = 250) {
+    let t;
+    return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), delay);
+    };
+}
+
+function nextFrame() {
+    return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+
+function loadFavorites() {
+    const favorites = localStorage.getItem('nodelist_favorites');
+    if (!favorites) {
+        favoritesSet = new Set();
+        return;
+    }
+
+    try {
+        const parsed = JSON.parse(favorites);
+        favoritesSet = new Set(Array.isArray(parsed) ? parsed : []);
+    } catch (err) {
+        console.warn("Failed to parse favorites, resetting.", err);
+        favoritesSet = new Set();
+    }
+}
+function saveFavorites() {
+    localStorage.setItem('nodelist_favorites', JSON.stringify([...favoritesSet]));
+}
+function toggleFavorite(nodeId) {
+    if (favoritesSet.has(nodeId)) {
+        favoritesSet.delete(nodeId);
+    } else {
+        favoritesSet.add(nodeId);
+    }
+    saveFavorites();
+}
 function isFavorite(nodeId) {
-    return getFavorites().includes(nodeId);
+    return favoritesSet.has(nodeId);
 }
 
+function timeAgoFromMs(msTimestamp) {
+    if (!msTimestamp) return "N/A";
+    const diff = Date.now() - msTimestamp;
+
+    if (diff < 60000) return "just now";
+    const mins = Math.floor(diff / 60000);
+    if (mins < 60) return `${mins} min ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} hr ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days} days ago`;
+}
+
+// =====================================================
+// DOM LOADED
+// =====================================================
 document.addEventListener("DOMContentLoaded", async function() {
+
+    await loadTranslationsNodelist();
+    loadFavorites();
+
     const tbody = document.getElementById("node-table-body");
+    const mobileList = document.getElementById("mobile-node-list");
+
     const roleFilter = document.getElementById("role-filter");
     const channelFilter = document.getElementById("channel-filter");
     const hwFilter = document.getElementById("hw-filter");
     const firmwareFilter = document.getElementById("firmware-filter");
     const searchBox = document.getElementById("search-box");
     const countSpan = document.getElementById("node-count");
+    const statusSpan = document.getElementById("node-status");
     const exportBtn = document.getElementById("export-btn");
     const clearBtn = document.getElementById("clear-btn");
     const favoritesBtn = document.getElementById("favorites-btn");
 
+    let lastIsMobile = (window.innerWidth <= 768);
+
     try {
-        const response = await fetch("/api/nodes?days_active=3");
-        if (!response.ok) throw new Error("Failed to fetch nodes");
-        const data = await response.json();
-        allNodes = data.nodes;
+        setStatus("Loading nodes…");
+        await nextFrame();
+        const res = await fetch("/api/nodes?days_active=3");
+        if (!res.ok) throw new Error("Failed to fetch nodes");
+
+        const data = await res.json();
+
+        allNodes = data.nodes.map(n => {
+            const firmware = n.firmware || n.firmware_version || "";
+            const last_seen_us = n.last_seen_us || 0;
+            const last_seen_ms = last_seen_us ? (last_seen_us / 1000) : 0;
+
+            return {
+                ...n,
+                firmware,
+                last_seen_us,
+                last_seen_ms,
+                _search: [
+                    n.node_id,
+                    n.id,
+                    n.long_name,
+                    n.short_name
+                ]
+                    .filter(Boolean)
+                    .join(" ")
+                    .toLowerCase()
+            };
+        });
+
         populateFilters(allNodes);
-        renderTable(allNodes);
+        applyFilters(); // ensures initial sort + render uses same path
         updateSortIcons();
+        setStatus("");
     } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:red;">Error loading nodes: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr>
+            <td colspan="11" style="text-align:center; color:red;">
+                ${nodelistTranslations.error_loading_nodes || "Error loading nodes"}
+            </td></tr>`;
+        setStatus("");
+        return;
     }
 
     roleFilter.addEventListener("change", applyFilters);
     channelFilter.addEventListener("change", applyFilters);
     hwFilter.addEventListener("change", applyFilters);
     firmwareFilter.addEventListener("change", applyFilters);
-    searchBox.addEventListener("input", applyFilters);
+
+    // Debounced only for search typing
+    searchBox.addEventListener("input", debounce(applyFilters, 250));
+
     exportBtn.addEventListener("click", exportToCSV);
     clearBtn.addEventListener("click", clearFilters);
     favoritesBtn.addEventListener("click", toggleFavoritesFilter);
-    
-    // Use event delegation for star clicks
-    tbody.addEventListener("click", (e) => {
+
+    // Favorite star click handler (delegated)
+    document.addEventListener("click", e => {
         if (e.target.classList.contains('favorite-star')) {
-            const nodeId = parseInt(e.target.getAttribute('data-node-id'));
-            
-            // Get current favorites
-            let favorites = getFavorites();
-            const index = favorites.indexOf(nodeId);
-            const isNowFavorite = index === -1; // Will it be a favorite after toggle?
-            
-            // Update the star immediately for instant feedback
-            if (isNowFavorite) {
-                e.target.classList.add('active');
-                e.target.textContent = '★';
+            const nodeId = parseInt(e.target.dataset.nodeId, 10);
+            const fav = isFavorite(nodeId);
+
+            if (fav) {
+                e.target.classList.remove("active");
+                e.target.textContent = "☆";
             } else {
-                e.target.classList.remove('active');
-                e.target.textContent = '☆';
+                e.target.classList.add("active");
+                e.target.textContent = "★";
             }
-            
-            // Save to localStorage
+
             toggleFavorite(nodeId);
+            applyFilters();
         }
     });
 
     headers.forEach((th, index) => {
         th.addEventListener("click", () => {
             const key = keyMap[index];
+            // ignore clicks on the "favorite" (last header) which has no sort key
+            if (!key) return;
+
             sortAsc = (sortColumn === key) ? !sortAsc : true;
             sortColumn = key;
-            applyFilters(); // apply filters and sort
+
+            applyFilters();
         });
     });
 
+    // Re-render on breakpoint change so mobile/desktop view switches instantly
+    window.addEventListener("resize", debounce(() => {
+        const isMobile = (window.innerWidth <= 768);
+        if (isMobile !== lastIsMobile) {
+            lastIsMobile = isMobile;
+            applyFilters();
+        }
+    }, 150));
+
     function populateFilters(nodes) {
-        const roles = new Set();
-        const channels = new Set();
-        const hws = new Set();
-        const firmwares = new Set();
+        const roles = new Set(), channels = new Set(), hws = new Set(), fws = new Set();
 
         nodes.forEach(n => {
             if (n.role) roles.add(n.role);
             if (n.channel) channels.add(n.channel);
             if (n.hw_model) hws.add(n.hw_model);
-            if (n.firmware) firmwares.add(n.firmware);
+            if (n.firmware) fws.add(n.firmware);
         });
 
         fillSelect(roleFilter, roles);
         fillSelect(channelFilter, channels);
         fillSelect(hwFilter, hws);
-        fillSelect(firmwareFilter, firmwares);
+        fillSelect(firmwareFilter, fws);
     }
 
     function fillSelect(select, values) {
         [...values].sort().forEach(v => {
-            const option = document.createElement("option");
-            option.value = v;
-            option.textContent = v;
-            select.appendChild(option);
+            const opt = document.createElement("option");
+            opt.value = v;
+            opt.textContent = v;
+            select.appendChild(opt);
         });
     }
 
     function toggleFavoritesFilter() {
         showOnlyFavorites = !showOnlyFavorites;
-        if (showOnlyFavorites) {
-            favoritesBtn.textContent = "⭐ Show All";
-            favoritesBtn.classList.add("active");
-        } else {
-            favoritesBtn.textContent = "⭐ Show Favorites";
-            favoritesBtn.classList.remove("active");
-        }
+        favoritesBtn.textContent = showOnlyFavorites
+            ? "Show All"
+            : "⭐ Show Favorites";
+        favoritesBtn.classList.toggle("active", showOnlyFavorites);
         applyFilters();
     }
 
-    function applyFilters() {
+    async function applyFilters() {
+        setStatus("Updating…");
+        await nextFrame();
         const searchTerm = searchBox.value.trim().toLowerCase();
 
-        let filtered = allNodes.filter(node => {
-            const roleMatch = !roleFilter.value || node.role === roleFilter.value;
-            const channelMatch = !channelFilter.value || node.channel === channelFilter.value;
-            const hwMatch = !hwFilter.value || node.hw_model === hwFilter.value;
-            const firmwareMatch = !firmwareFilter.value || node.firmware === firmwareFilter.value;
+        let filtered = allNodes.filter(n => {
+            const roleMatch = !roleFilter.value || n.role === roleFilter.value;
+            const channelMatch = !channelFilter.value || n.channel === channelFilter.value;
+            const hwMatch = !hwFilter.value || n.hw_model === hwFilter.value;
+            const fwMatch = !firmwareFilter.value || n.firmware === firmwareFilter.value;
 
-            const searchMatch = !searchTerm ||
-                (node.long_name && node.long_name.toLowerCase().includes(searchTerm)) ||
-                (node.short_name && node.short_name.toLowerCase().includes(searchTerm)) ||
-                (node.node_id && node.node_id.toString().includes(searchTerm)) ||
-                (node.id && node.id.toString().includes(searchTerm));
+            const searchMatch = !searchTerm || n._search.includes(searchTerm);
+            const favMatch = !showOnlyFavorites || isFavorite(n.node_id);
 
-            const favoriteMatch = !showOnlyFavorites || isFavorite(node.node_id);
-
-            return roleMatch && channelMatch && hwMatch && firmwareMatch && searchMatch && favoriteMatch;
+            return roleMatch && channelMatch && hwMatch && fwMatch && searchMatch && favMatch;
         });
 
-        if (sortColumn) {
-            filtered = sortNodes(filtered, sortColumn, sortAsc);
-        }
+        // IMPORTANT: Always sort the filtered subset to preserve expected behavior
+        filtered = sortNodes(filtered, sortColumn, sortAsc);
 
         renderTable(filtered);
         updateSortIcons();
+        setStatus("");
     }
 
     function renderTable(nodes) {
-        tbody.innerHTML = "";
-        if (!nodes.length) {
-            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; color:white;">No nodes found</td></tr>';
+        const isMobile = window.innerWidth <= 768;
+        const shouldRenderTable = !isMobile;
+
+        if (shouldRenderTable) {
+            tbody.innerHTML = "";
         } else {
-            nodes.forEach(node => {
+            mobileList.innerHTML = "";
+        }
+
+        const tableFrag = shouldRenderTable ? document.createDocumentFragment() : null;
+        const mobileFrag = shouldRenderTable ? null : document.createDocumentFragment();
+
+        if (!nodes.length) {
+            if (shouldRenderTable) {
+                tbody.innerHTML = `<tr>
+                    <td colspan="11" style="text-align:center; color:white;">
+                        ${nodelistTranslations.no_nodes_found || "No nodes found"}
+                    </td>
+                </tr>`;
+            } else {
+                mobileList.innerHTML = `<div style="text-align:center; color:white;">
+                    ${nodelistTranslations.no_nodes_found || "No nodes found"}
+                </div>`;
+            }
+
+            countSpan.textContent = 0;
+            return;
+        }
+
+        nodes.forEach(node => {
+            const fav = isFavorite(node.node_id);
+            const star = fav ? "★" : "☆";
+
+            if (shouldRenderTable) {
+                // DESKTOP TABLE ROW
                 const row = document.createElement("tr");
-                const isFav = isFavorite(node.node_id);
-                const starClass = isFav ? 'favorite-star active' : 'favorite-star';
-                const starIcon = isFav ? '★' : '☆';
-                
                 row.innerHTML = `
                     <td>${node.short_name || "N/A"}</td>
-                    <td><a href="/packet_list/${node.node_id}">${node.long_name || "N/A"}</a></td>
+                    <td><a href="/node/${node.node_id}">${node.long_name || "N/A"}</a></td>
                     <td>${node.hw_model || "N/A"}</td>
                     <td>${node.firmware || "N/A"}</td>
                     <td>${node.role || "N/A"}</td>
                     <td>${node.last_lat ? (node.last_lat / 1e7).toFixed(7) : "N/A"}</td>
                     <td>${node.last_long ? (node.last_long / 1e7).toFixed(7) : "N/A"}</td>
                     <td>${node.channel || "N/A"}</td>
-                    <td>${node.last_update ? new Date(node.last_update).toLocaleString() : "N/A"}</td>
-                    <td style="text-align:center;"><span class="${starClass}" data-node-id="${node.node_id}">${starIcon}</span></td>
+                    <td>${node.is_mqtt_gateway ? (nodelistTranslations.yes || "Yes") : (nodelistTranslations.no || "No")}</td>
+                    <td>${timeAgoFromMs(node.last_seen_ms)}</td>
+                    <td style="text-align:center;">
+                        <span class="favorite-star ${fav ? "active" : ""}" data-node-id="${node.node_id}">
+                            ${star}
+                        </span>
+                    </td>
                 `;
-                
-                tbody.appendChild(row);
-            });
-        }
+                tableFrag.appendChild(row);
+            } else {
+                // MOBILE CARD VIEW
+                const card = document.createElement("div");
+                card.className = "node-card";
+                card.innerHTML = `
+                    <div class="node-card-header">
+                        <span>${node.short_name || node.long_name || node.node_id}</span>
+                        <span class="favorite-star ${fav ? "active" : ""}" data-node-id="${node.node_id}">
+                            ${star}
+                        </span>
+                    </div>
+
+                    <div class="node-card-field"><b>ID:</b> ${node.node_id}</div>
+                    <div class="node-card-field"><b>Name:</b> ${node.long_name || "N/A"}</div>
+                    <div class="node-card-field"><b>HW:</b> ${node.hw_model || "N/A"}</div>
+                    <div class="node-card-field"><b>Firmware:</b> ${node.firmware || "N/A"}</div>
+                    <div class="node-card-field"><b>Role:</b> ${node.role || "N/A"}</div>
+                    <div class="node-card-field"><b>Location:</b>
+                        ${node.last_lat ? (node.last_lat / 1e7).toFixed(5) : "N/A"},
+                        ${node.last_long ? (node.last_long / 1e7).toFixed(5) : "N/A"}
+                    </div>
+                    <div class="node-card-field"><b>Channel:</b> ${node.channel || "N/A"}</div>
+                    <div class="node-card-field"><b>Last Seen:</b> ${timeAgoFromMs(node.last_seen_ms)}</div>
+
+                    <a href="/node/${node.node_id}" style="color:#9fd4ff; text-decoration:underline; margin-top:5px; display:block;">
+                        View Node →
+                    </a>
+                `;
+                mobileFrag.appendChild(card);
+            }
+        });
+
+        // Toggle correct view
+        mobileList.style.display = isMobile ? "block" : "none";
+
         countSpan.textContent = nodes.length;
+
+        if (shouldRenderTable) {
+            tbody.appendChild(tableFrag);
+        } else {
+            mobileList.appendChild(mobileFrag);
+        }
     }
 
     function clearFilters() {
@@ -373,62 +673,107 @@ document.addEventListener("DOMContentLoaded", async function() {
         hwFilter.value = "";
         firmwareFilter.value = "";
         searchBox.value = "";
+
         sortColumn = "short_name";
         sortAsc = true;
         showOnlyFavorites = false;
+
         favoritesBtn.textContent = "⭐ Show Favorites";
         favoritesBtn.classList.remove("active");
-        renderTable(allNodes);
+
+        applyFilters();
         updateSortIcons();
     }
 
     function exportToCSV() {
         const rows = [];
-        const headersText = Array.from(headers).map(th => `"${th.innerText.replace(/▲|▼/g,'')}"`);
-        rows.push(headersText.join(","));
+        const headerList = Array.from(headers).map(h =>
+            `"${h.innerText.replace(/▲|▼/g,'')}"`
+        );
+        rows.push(headerList.join(","));
 
-        const visibleRows = tbody.querySelectorAll("tr");
-        visibleRows.forEach(tr => {
-            if (tr.children.length === 9) {
-                const row = Array.from(tr.children).map(td => `"${td.innerText.replace(/"/g, '""')}"`);
-                rows.push(row.join(","));
-            }
+        const trs = tbody.querySelectorAll("tr");
+        trs.forEach(tr => {
+            const cells = Array.from(tr.children).map(td =>
+                `"${td.innerText.replace(/"/g,'""')}"`
+            );
+            rows.push(cells.join(","));
         });
 
-        const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + rows.join("\n");
-        const link = document.createElement("a");
-        link.href = encodeURI(csvContent);
-        const dateStr = new Date().toISOString().slice(0,10);
-        link.download = `nodes_list_${dateStr}.csv`;
-        link.click();
+        const csv = "data:text/csv;charset=utf-8,\uFEFF" + rows.join("\n");
+        const a = document.createElement("a");
+        a.href = encodeURI(csv);
+        a.download = "nodelist.csv";
+        a.click();
     }
 
     function sortNodes(nodes, key, asc) {
         return [...nodes].sort((a, b) => {
-            let valA = a[key] || "";
-            let valB = b[key] || "";
+            let A = a[key];
+            let B = b[key];
 
-            if (key === "last_lat" || key === "last_long") {
-                valA = Number(valA) || 0;
-                valB = Number(valB) || 0;
-            }
-            if (key === "last_update") {
-                valA = valA ? new Date(valA).getTime() : 0;
-                valB = valB ? new Date(valB).getTime() : 0;
+            if (key === "last_seen_us") {
+                A = A || 0;
+                B = B || 0;
             }
 
-            if (valA < valB) return asc ? -1 : 1;
-            if (valA > valB) return asc ? 1 : -1;
+            if (key === "is_mqtt_gateway") {
+                A = A ? 1 : 0;
+                B = B ? 1 : 0;
+            }
+
+            // Normalize strings for stable sorting
+            if (typeof A === "string") A = A.toLowerCase();
+            if (typeof B === "string") B = B.toLowerCase();
+
+            if (A < B) return asc ? -1 : 1;
+            if (A > B) return asc ? 1 : -1;
             return 0;
         });
     }
 
     function updateSortIcons() {
-        headers.forEach((th, index) => {
+        headers.forEach((th, i) => {
             const span = th.querySelector(".sort-icon");
             if (!span) return;
-            span.textContent = (keyMap[index] === sortColumn) ? (sortAsc ? "▲" : "▼") : "";
+            span.textContent =
+                keyMap[i] === sortColumn ? (sortAsc ? "▲" : "▼") : "";
         });
+    }
+
+    function setStatus(message) {
+        if (!statusSpan) return;
+        if (statusHideTimer) {
+            clearTimeout(statusHideTimer);
+            statusHideTimer = null;
+        }
+
+        if (message) {
+            statusShownAt = Date.now();
+            console.log("[nodelist] status:", message);
+            statusSpan.textContent = message;
+            statusSpan.classList.add("active");
+            isBusy = true;
+            return;
+        }
+
+        const elapsed = Date.now() - statusShownAt;
+        const remaining = Math.max(0, minStatusMs - elapsed);
+        if (remaining > 0) {
+            statusHideTimer = setTimeout(() => {
+                statusHideTimer = null;
+                console.log("[nodelist] status: cleared");
+                statusSpan.textContent = "";
+                statusSpan.classList.remove("active");
+                isBusy = false;
+            }, remaining);
+            return;
+        }
+
+        console.log("[nodelist] status: cleared");
+        statusSpan.textContent = "";
+        statusSpan.classList.remove("active");
+        isBusy = false;
     }
 });
 </script>

@@ -44,6 +44,7 @@ body { margin: 0; font-family: monospace; background: #121212; color: #eee; }
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
 <script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylinedecorator.js" crossorigin></script>
+<script src="/static/portmaps.js"></script>
 
 <script>
 (async function(){
@@ -75,8 +76,8 @@ body { margin: 0; font-family: monospace; background: #121212; color: #eee; }
         return color;
     }
 
-    function timeAgo(dateStr){
-        const diff = Date.now() - new Date(dateStr);
+    function timeAgoFromUs(us){
+        const diff = Date.now() - (us / 1000);
         const s=Math.floor(diff/1000), m=Math.floor(s/60), h=Math.floor(m/60), d=Math.floor(h/24);
         if(d>0) return d+'d'; if(h>0) return h+'h'; if(m>0) return m+'m'; return s+'s';
     }
@@ -97,7 +98,7 @@ body { margin: 0; font-family: monospace; background: #121212; color: #eee; }
     const channels = new Set();
     const activeBlinks = new Map();
 
-    const portMap = {1:"Text",67:"Telemetry",3:"Position",70:"Traceroute",4:"Node Info",71:"Neighbour Info",73:"Map Report"};
+    const portMap = window.PORT_LABEL_MAP;
 
     nodes.forEach(node=>{
         if(isInvalidCoord(node)) return;
@@ -118,7 +119,7 @@ body { margin: 0; font-family: monospace; background: #121212; color: #eee; }
                           <b>Channel:</b> ${node.channel}<br>
                           <b>Model:</b> ${node.hw_model}<br>
                           <b>Role:</b> ${node.role}<br>`;
-        if(node.last_update) popupContent+=`<b>Last seen:</b> ${timeAgo(node.last_update)}<br>`;
+        if(node.last_seen_us) popupContent+=`<b>Last seen:</b> ${timeAgoFromUs(node.last_seen_us)}<br>`;
         if(node.firmware) popupContent+=`<b>Firmware:</b> ${node.firmware}<br>`;
 
         marker.on('click', e=>{
@@ -190,31 +191,50 @@ body { margin: 0; font-family: monospace; background: #121212; color: #eee; }
         activeBlinks.set(marker,interval);
     }
 
-    let lastImportTime=null;
+    let lastImportTimeUs = null;
+
     async function fetchLatestPacket(){
         try{
-            const res=await fetch(`/api/packets?limit=1`);
-            const data=await res.json();
-            lastImportTime=data.packets?.[0]?.import_time || new Date().toISOString();
-        }catch(err){ console.error(err); }
+            const res = await fetch(`/api/packets?limit=1`);
+            const data = await res.json();
+            lastImportTimeUs = data.packets?.[0]?.import_time_us || 0;
+        }catch(err){
+            console.error(err);
+        }
     }
 
     async function fetchNewPackets(){
-        if(!lastImportTime) return;
+        if (!lastImportTimeUs) return;
+
         try{
-            const res=await fetch(`/api/packets?since=${lastImportTime}`);
-            const data=await res.json();
+            const res = await fetch(`/api/packets?since=${lastImportTimeUs}`);
+            const data = await res.json();
             if(!data.packets || !data.packets.length) return;
-            let latest=lastImportTime;
-            data.packets.forEach(packet=>{
-                if(packet.import_time && packet.import_time>latest) latest=packet.import_time;
-                const marker=markerById[packet.from_node_id];
-                const nodeData=nodeMap.get(packet.from_node_id);
-                if(marker && nodeData) blinkNode(marker,nodeData.long_name,packet.portnum);
+
+            let latest = lastImportTimeUs;
+
+            data.packets.forEach(packet => {
+
+                // Track newest microsecond timestamp
+                if (packet.import_time_us && packet.import_time_us > latest) {
+                    latest = packet.import_time_us;
+                }
+
+                // Look up marker and blink it
+                const marker = markerById[packet.from_node_id];
+                const nodeData = nodeMap.get(packet.from_node_id);
+                if (marker && nodeData) {
+                    blinkNode(marker, nodeData.long_name, packet.portnum);
+                }
             });
-            lastImportTime=latest;
-        }catch(err){ console.error(err); }
+
+            lastImportTimeUs = latest;
+
+        }catch(err){
+            console.error(err);
+        }
     }
+
 
     if(mapInterval>0){ fetchLatestPacket(); setInterval(fetchNewPackets,mapInterval*1000); }
 

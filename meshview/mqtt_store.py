@@ -1,14 +1,21 @@
-import datetime
+import logging
 import re
+import time
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 
 from meshtastic.protobuf.config_pb2 import Config
 from meshtastic.protobuf.mesh_pb2 import HardwareModel
 from meshtastic.protobuf.portnums_pb2 import PortNum
 from meshview import decode_payload, mqtt_database
-from meshview.models import Node, Packet, PacketSeen, Traceroute
+from meshview.models import Node, NodePublicKey, Packet, PacketSeen, Traceroute
+
+logger = logging.getLogger(__name__)
+
+MQTT_GATEWAY_CACHE: set[int] = set()
 
 
 async def process_envelope(topic, env):
@@ -37,6 +44,8 @@ async def process_envelope(topic, env):
                     await session.execute(select(Node).where(Node.node_id == node_id))
                 ).scalar_one_or_none()
 
+                now_us = int(time.time() * 1_000_000)
+
                 if node:
                     node.node_id = node_id
                     node.long_name = map_report.long_name
@@ -47,7 +56,9 @@ async def process_envelope(topic, env):
                     node.last_lat = map_report.latitude_i
                     node.last_long = map_report.longitude_i
                     node.firmware = map_report.firmware_version
-                    node.last_update = datetime.datetime.now()
+                    node.last_seen_us = now_us
+                    if node.first_seen_us is None:
+                        node.first_seen_us = now_us
                 else:
                     node = Node(
                         id=user_id,
@@ -60,7 +71,8 @@ async def process_envelope(topic, env):
                         firmware=map_report.firmware_version,
                         last_lat=map_report.latitude_i,
                         last_long=map_report.longitude_i,
-                        last_update=datetime.datetime.now(),
+                        first_seen_us=now_us,
+                        last_seen_us=now_us,
                     )
                     session.add(node)
             except Exception as e:
@@ -74,26 +86,43 @@ async def process_envelope(topic, env):
     async with mqtt_database.async_session() as session:
         # --- Packet insert with ON CONFLICT DO NOTHING
         result = await session.execute(select(Packet).where(Packet.id == env.packet.id))
-        # FIXME: Not Used
-        # new_packet = False
         packet = result.scalar_one_or_none()
         if not packet:
-            # FIXME: Not Used
-            # new_packet = True
-            stmt = (
-                sqlite_insert(Packet)
-                .values(
-                    id=env.packet.id,
-                    portnum=env.packet.decoded.portnum,
-                    from_node_id=getattr(env.packet, "from"),
-                    to_node_id=env.packet.to,
-                    payload=env.packet.SerializeToString(),
-                    import_time=datetime.datetime.now(),
-                    channel=env.channel_id,
+            now_us = int(time.time() * 1_000_000)
+            packet_values = {
+                "id": env.packet.id,
+                "portnum": env.packet.decoded.portnum,
+                "from_node_id": getattr(env.packet, "from"),
+                "to_node_id": env.packet.to,
+                "payload": env.packet.SerializeToString(),
+                "import_time_us": now_us,
+                "channel": env.channel_id,
+            }
+            dialect = session.get_bind().dialect.name
+            stmt = None
+
+            if dialect == "sqlite":
+                stmt = (
+                    sqlite_insert(Packet)
+                    .values(**packet_values)
+                    .on_conflict_do_nothing(index_elements=["id"])
                 )
-                .on_conflict_do_nothing(index_elements=["id"])
-            )
-            await session.execute(stmt)
+            elif dialect == "postgresql":
+                stmt = (
+                    pg_insert(Packet)
+                    .values(**packet_values)
+                    .on_conflict_do_nothing(index_elements=["id"])
+                )
+
+            if stmt is not None:
+                await session.execute(stmt)
+            else:
+                try:
+                    async with session.begin_nested():
+                        session.add(Packet(**packet_values))
+                        await session.flush()
+                except IntegrityError:
+                    pass
 
         # --- PacketSeen (no conflict handling here, normal insert)
 
@@ -104,6 +133,12 @@ async def process_envelope(topic, env):
         else:
             node_id = int(env.gateway_id[1:], 16)
 
+        if node_id not in MQTT_GATEWAY_CACHE:
+            MQTT_GATEWAY_CACHE.add(node_id)
+            await session.execute(
+                update(Node).where(Node.node_id == node_id).values(is_mqtt_gateway=True)
+            )
+
         result = await session.execute(
             select(PacketSeen).where(
                 PacketSeen.packet_id == env.packet.id,
@@ -112,6 +147,7 @@ async def process_envelope(topic, env):
             )
         )
         if not result.scalar_one_or_none():
+            now_us = int(time.time() * 1_000_000)
             seen = PacketSeen(
                 packet_id=env.packet.id,
                 node_id=int(env.gateway_id[1:], 16),
@@ -122,7 +158,7 @@ async def process_envelope(topic, env):
                 hop_limit=env.packet.hop_limit,
                 hop_start=env.packet.hop_start,
                 topic=topic,
-                import_time=datetime.datetime.now(),
+                import_time_us=now_us,
             )
             session.add(seen)
 
@@ -153,6 +189,8 @@ async def process_envelope(topic, env):
                         await session.execute(select(Node).where(Node.id == user.id))
                     ).scalar_one_or_none()
 
+                    now_us = int(time.time() * 1_000_000)
+
                     if node:
                         node.node_id = node_id
                         node.long_name = user.long_name
@@ -160,7 +198,9 @@ async def process_envelope(topic, env):
                         node.hw_model = hw_model
                         node.role = role
                         node.channel = env.channel_id
-                        node.last_update = datetime.datetime.now()
+                        node.last_seen_us = now_us
+                        if node.first_seen_us is None:
+                            node.first_seen_us = now_us
                     else:
                         node = Node(
                             id=user.id,
@@ -170,9 +210,32 @@ async def process_envelope(topic, env):
                             hw_model=hw_model,
                             role=role,
                             channel=env.channel_id,
-                            last_update=datetime.datetime.now(),
+                            first_seen_us=now_us,
+                            last_seen_us=now_us,
                         )
                         session.add(node)
+
+                    if user.public_key:
+                        public_key_hex = user.public_key.hex()
+                        existing_key = (
+                            await session.execute(
+                                select(NodePublicKey).where(
+                                    NodePublicKey.node_id == node_id,
+                                    NodePublicKey.public_key == public_key_hex,
+                                )
+                            )
+                        ).scalar_one_or_none()
+
+                        if existing_key:
+                            existing_key.last_seen_us = now_us
+                        else:
+                            new_key = NodePublicKey(
+                                node_id=node_id,
+                                public_key=public_key_hex,
+                                first_seen_us=now_us,
+                                last_seen_us=now_us,
+                            )
+                            session.add(new_key)
             except Exception as e:
                 print(f"Error processing NODEINFO_APP: {e}")
 
@@ -187,34 +250,35 @@ async def process_envelope(topic, env):
                     await session.execute(select(Node).where(Node.node_id == from_node_id))
                 ).scalar_one_or_none()
                 if node:
+                    now_us = int(time.time() * 1_000_000)
                     node.last_lat = position.latitude_i
                     node.last_long = position.longitude_i
+                    node.last_seen_us = now_us
+                    if node.first_seen_us is None:
+                        node.first_seen_us = now_us
                     session.add(node)
 
         # --- TRACEROUTE_APP (no conflict handling, normal insert)
         if env.packet.decoded.portnum == PortNum.TRACEROUTE_APP:
-            packet_id = None
-            if env.packet.decoded.want_response:
-                packet_id = env.packet.id
-            else:
-                result = await session.execute(
-                    select(Packet).where(Packet.id == env.packet.decoded.request_id)
-                )
-                if result.scalar_one_or_none():
-                    packet_id = env.packet.decoded.request_id
+            packet_id = env.packet.id
             if packet_id is not None:
+                now_us = int(time.time() * 1_000_000)
                 session.add(
                     Traceroute(
                         packet_id=packet_id,
                         route=env.packet.decoded.payload,
                         done=not env.packet.decoded.want_response,
                         gateway_node_id=int(env.gateway_id[1:], 16),
-                        import_time=datetime.datetime.now(),
+                        import_time_us=now_us,
                     )
                 )
 
         await session.commit()
 
-        # if new_packet:
-        #    await packet.awaitable_attrs.to_node
-        #    await packet.awaitable_attrs.from_node
+
+async def load_gateway_cache():
+    async with mqtt_database.async_session() as session:
+        result = await session.execute(
+            select(Node.node_id).where(Node.is_mqtt_gateway == True)  # noqa: E712
+        )
+        MQTT_GATEWAY_CACHE.update(result.scalars().all())
