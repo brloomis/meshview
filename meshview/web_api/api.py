@@ -10,10 +10,10 @@ from aiohttp import web
 from sqlalchemy import func, select
 
 from meshtastic.protobuf.portnums_pb2 import PortNum
-from meshview import database, decode_payload, store
+from meshview import database, decode_payload, store, traceroute
 from meshview.__version__ import __version__, _git_revision_short, get_version_info
 from meshview.config import CONFIG
-from meshview.models import Node, NodePublicKey
+from meshview.models import DailySnapshot, Node
 from meshview.models import Packet as PacketModel
 from meshview.models import PacketSeen as PacketSeenModel
 from meshview.radio.coverage import (
@@ -36,6 +36,96 @@ _LANG_CACHE = {}
 
 # Create dedicated route table for API endpoints
 routes = web.RouteTableDef()
+
+
+def _config_bool(section: str, key: str, default: bool = False) -> bool:
+    return str(CONFIG.get(section, {}).get(key, default)).lower() in ("1", "true", "yes", "on")
+
+
+def _config_int(section: str, key: str, default: int = 0) -> int:
+    try:
+        return int(CONFIG.get(section, {}).get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _config_str(section: str, key: str, default: str = "") -> str:
+    value = CONFIG.get(section, {}).get(key, default)
+    return str(value) if value is not None else default
+
+
+def _cleanup_status_file() -> str:
+    cleanup_logfile = CONFIG.get("logging", {}).get("db_cleanup_logfile", "dbcleanup.log")
+    path_without_extension, _ = os.path.splitext(cleanup_logfile)
+    return f"{path_without_extension}.status.json"
+
+
+def _backup_status_file() -> str:
+    cleanup_logfile = CONFIG.get("logging", {}).get("db_cleanup_logfile", "dbcleanup.log")
+    return os.path.join(os.path.dirname(cleanup_logfile), "dbbackup.status.json")
+
+
+def _get_cleanup_health() -> dict:
+    cleanup_health = {
+        "enabled": _config_bool("cleanup", "enabled", False),
+        "days_to_keep": _config_int("cleanup", "days_to_keep", 14),
+        "scheduled_time": (
+            f"{_config_int('cleanup', 'hour', 2):02d}:{_config_int('cleanup', 'minute', 0):02d}"
+        ),
+        "vacuum": _config_bool("cleanup", "vacuum", False),
+        "status": "disabled",
+    }
+
+    if cleanup_health["enabled"]:
+        cleanup_health["status"] = "unknown"
+
+    status_file = _cleanup_status_file()
+    cleanup_health["status_file"] = status_file
+    if not os.path.exists(status_file):
+        return cleanup_health
+
+    try:
+        with open(status_file, encoding="utf-8") as f:
+            last_run = json.load(f)
+    except Exception as e:
+        cleanup_health["status"] = "error"
+        cleanup_health["error"] = f"Unable to read cleanup status: {e}"
+        return cleanup_health
+
+    cleanup_health["status"] = last_run.get("status", cleanup_health["status"])
+    cleanup_health["last_run"] = last_run
+    return cleanup_health
+
+
+def _get_backup_health() -> dict:
+    backup_hour = _config_int("cleanup", "backup_hour", _config_int("cleanup", "hour", 2))
+    backup_minute = _config_int("cleanup", "backup_minute", _config_int("cleanup", "minute", 0))
+    backup_health = {
+        "enabled": _config_bool("cleanup", "backup_enabled", False),
+        "backup_dir": _config_str("cleanup", "backup_dir", "./backups"),
+        "scheduled_time": f"{backup_hour:02d}:{backup_minute:02d}",
+        "status": "disabled",
+    }
+
+    if backup_health["enabled"]:
+        backup_health["status"] = "unknown"
+
+    status_file = _backup_status_file()
+    backup_health["status_file"] = status_file
+    if not os.path.exists(status_file):
+        return backup_health
+
+    try:
+        with open(status_file, encoding="utf-8") as f:
+            last_run = json.load(f)
+    except Exception as e:
+        backup_health["status"] = "error"
+        backup_health["error"] = f"Unable to read backup status: {e}"
+        return backup_health
+
+    backup_health["status"] = last_run.get("status", backup_health["status"])
+    backup_health["last_run"] = last_run
+    return backup_health
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):
@@ -160,6 +250,8 @@ async def api_packets(request):
             p = Packet.from_model(packet)
             data = {
                 "id": p.id,
+                "storage_id": p.id,
+                "packet_id": p.packet_id,
                 "from_node_id": p.from_node_id,
                 "to_node_id": p.to_node_id,
                 "portnum": int(p.portnum) if p.portnum is not None else None,
@@ -249,6 +341,8 @@ async def api_packets(request):
         for p in ui_packets:
             packet_dict = {
                 "id": p.id,
+                "storage_id": p.id,
+                "packet_id": p.packet_id,
                 "import_time_us": p.import_time_us,
                 "channel": p.channel,
                 "from_node_id": p.from_node_id,
@@ -452,6 +546,59 @@ async def api_stats_count(request):
     return web.json_response({"total_packets": total_packets, "total_seen": total_seen})
 
 
+@routes.get("/api/snapshots/daily")
+async def api_daily_snapshots(request):
+    length_raw = request.query.get("length")
+    length = None
+    if length_raw is not None:
+        try:
+            length = int(length_raw)
+        except ValueError:
+            return web.json_response({"error": "length must be an integer"}, status=400)
+        length = max(1, min(length, 3650))
+
+    try:
+        async with database.async_session() as session:
+            if length is not None:
+                rows = (
+                    (
+                        await session.execute(
+                            select(DailySnapshot)
+                            .order_by(DailySnapshot.snapshot_date.desc())
+                            .limit(length)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                rows = list(reversed(rows))
+            else:
+                rows = (
+                    (
+                        await session.execute(
+                            select(DailySnapshot).order_by(DailySnapshot.snapshot_date.asc())
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
+        data = [
+            {
+                "date": row.snapshot_date.isoformat(),
+                "node_count": row.node_count,
+                "packet_count": row.packet_count,
+                "gateway_count": row.gateway_count,
+                "captured_at_us": row.captured_at_us,
+            }
+            for row in rows
+        ]
+        return web.json_response({"data": data})
+    except Exception as e:
+        logger.error(f"Error in /api/snapshots/daily: {e}")
+        return web.json_response({"error": "Failed to fetch daily snapshots"}, status=500)
+
+
 @routes.get("/api/edges")
 async def api_edges(request):
     since = datetime.datetime.now() - datetime.timedelta(hours=12)
@@ -480,11 +627,18 @@ async def api_edges(request):
                 route = decode_payload.decode_payload(PortNum.TRACEROUTE_APP, tr.route)
             except Exception:
                 continue
+            if route is None or tr.packet is None:
+                continue
 
-            path = [tr.packet.from_node_id] + list(route.route)
-            path.append(tr.packet.to_node_id if tr.done else tr.gateway_node_id)
+            path = traceroute.forward_path(
+                tr.packet.from_node_id,
+                tr.packet.to_node_id,
+                route.route,
+                tr.done,
+                tr.gateway_node_id,
+            )
 
-            for a, b in zip(path, path[1:], strict=False):
+            for a, b in traceroute.edges(path):
                 if (a, b) not in edges:
                     edges[(a, b)] = "traceroute"
                     edges_added_tr += 1
@@ -665,6 +819,8 @@ async def health_check(request):
         "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
         "version": __version__,
         "git_revision": _git_revision_short,
+        "cleanup": _get_cleanup_health(),
+        "backup": _get_backup_health(),
     }
 
     # Check database connectivity
@@ -781,6 +937,8 @@ async def api_traceroute(request):
     # --------------------------------------------
     for idx, tr in enumerate(traceroutes):
         route = decode_payload.decode_payload(PortNum.TRACEROUTE_APP, tr.route)
+        if route is None:
+            continue
 
         forward_list = list(route.route)
         reverse_list = list(route.route_back)
@@ -792,6 +950,7 @@ async def api_traceroute(request):
                 "done": tr.done,
                 "forward_hops": forward_list,
                 "reverse_hops": reverse_list,
+                "reverse_complete": traceroute.return_is_complete(route),
             }
         )
 
@@ -802,6 +961,7 @@ async def api_traceroute(request):
 
     forward_paths = []
     reverse_paths = []
+    forward_complete = set()
     winning_forward_paths = []
     winning_reverse_paths = []
 
@@ -815,11 +975,11 @@ async def api_traceroute(request):
         if tr["reverse_hops"]:
             reverse_paths.append(r)
 
+        # A response proves the request reached the target, whatever its return trip did.
         if tr["done"]:
-            if tr["forward_hops"]:
-                winning_forward_paths.append(f)
-            if tr["reverse_hops"]:
-                winning_reverse_paths.append(r)
+            forward_complete.add(f)
+            winning_forward_paths.append(f)
+            winning_reverse_paths.append((r, tr["reverse_complete"]))
 
     # Deduplicate
     unique_forward_paths = sorted(set(forward_paths))
@@ -830,30 +990,26 @@ async def api_traceroute(request):
 
     # Convert for JSON output
     unique_forward_paths_json = [
-        {"path": list(p), "count": forward_counts[p]} for p in unique_forward_paths
+        {"path": list(p), "count": forward_counts[p], "complete": p in forward_complete}
+        for p in unique_forward_paths
     ]
 
     unique_reverse_paths_json = [list(p) for p in unique_reverse_paths]
 
     from_node_id = packet.from_node_id
     to_node_id = packet.to_node_id
+    # Winning paths are only built from responses, which carry the endpoints reversed.
     winning_forward_with_endpoints = []
-    for path in set(winning_forward_paths):
-        full_path = list(path)
-        if from_node_id is not None and (not full_path or full_path[0] != from_node_id):
-            full_path = [from_node_id, *full_path]
-        if to_node_id is not None and (not full_path or full_path[-1] != to_node_id):
-            full_path = [*full_path, to_node_id]
-        winning_forward_with_endpoints.append(full_path)
+    for hops in dict.fromkeys(winning_forward_paths):
+        path = traceroute.forward_path(from_node_id, to_node_id, hops, done=True)
+        if len(path) > 1:
+            winning_forward_with_endpoints.append(path)
 
     winning_reverse_with_endpoints = []
-    for path in set(winning_reverse_paths):
-        full_path = list(path)
-        if to_node_id is not None and (not full_path or full_path[0] != to_node_id):
-            full_path = [to_node_id, *full_path]
-        if from_node_id is not None and (not full_path or full_path[-1] != from_node_id):
-            full_path = [*full_path, from_node_id]
-        winning_reverse_with_endpoints.append(full_path)
+    for hops, complete in winning_reverse_paths:
+        path = traceroute.return_path(from_node_id, to_node_id, hops, complete)
+        if len(path) > 1 and path not in winning_reverse_with_endpoints:
+            winning_reverse_with_endpoints.append(path)
 
     winning_paths_json = {
         "forward": winning_forward_with_endpoints,
@@ -863,12 +1019,17 @@ async def api_traceroute(request):
     # --------------------------------------------
     # Final API output
     # --------------------------------------------
+    initiator, target = traceroute.endpoints(
+        from_node_id, to_node_id, any(tr["done"] for tr in tr_groups)
+    )
     return web.json_response(
         {
             "packet": {
                 "id": packet.id,
                 "from": packet.from_node_id,
                 "to": packet.to_node_id,
+                "initiator": initiator,
+                "target": target,
                 "channel": packet.channel,
             },
             "traceroute_packets": tr_groups,
@@ -984,6 +1145,7 @@ async def api_node_qr(request):
 
     try:
         from meshtastic.protobuf.admin_pb2 import SharedContact
+        from meshtastic.protobuf.config_pb2 import Config
         from meshtastic.protobuf.mesh_pb2 import User
 
         user = User()
@@ -999,6 +1161,13 @@ async def api_node_qr(request):
                 hw_model_value = getattr(HardwareModel, node.hw_model.upper(), None)
                 if hw_model_value is not None:
                     user.hw_model = hw_model_value
+            except (AttributeError, TypeError):
+                pass
+        if node.role:
+            try:
+                role_value = getattr(Config.DeviceConfig.Role, node.role.upper(), None)
+                if role_value is not None:
+                    user.role = role_value
             except (AttributeError, TypeError):
                 pass
 
@@ -1020,6 +1189,7 @@ async def api_node_qr(request):
                 "node_id": node_id,
                 "long_name": node.long_name,
                 "short_name": node.short_name,
+                "role": node.role,
                 "meshtastic_url": meshtastic_url,
             }
         )
@@ -1029,44 +1199,6 @@ async def api_node_qr(request):
         logger.error(f"Error generating QR URL for node {node_id}: {e}")
         logger.error(traceback.format_exc())
         return web.json_response({"error": f"Failed to generate URL: {str(e)}"}, status=500)
-
-
-@routes.get("/api/node/{node_id}/impersonation-check")
-async def api_node_impersonation_check(request):
-    """
-    Check if a node has multiple different public keys, which could indicate impersonation.
-    """
-    try:
-        node_id_str = request.match_info["node_id"]
-        node_id = int(node_id_str, 0)
-    except (KeyError, ValueError):
-        return web.json_response({"error": "Invalid node_id"}, status=400)
-
-    try:
-        async with database.async_session() as session:
-            result = await session.execute(
-                select(NodePublicKey.public_key).where(NodePublicKey.node_id == node_id).distinct()
-            )
-            public_keys = result.scalars().all()
-
-            unique_key_count = len(public_keys)
-
-            return web.json_response(
-                {
-                    "node_id": node_id,
-                    "unique_public_key_count": unique_key_count,
-                    "potential_impersonation": unique_key_count > 1,
-                    "public_keys": public_keys
-                    if unique_key_count <= 3
-                    else public_keys[:3] + ["..."],
-                    "warning": "Multiple different public keys detected. This node may be getting impersonated."
-                    if unique_key_count > 1
-                    else None,
-                }
-            )
-    except Exception as e:
-        logger.error(f"Error checking impersonation for node {node_id}: {e}")
-        return web.json_response({"error": "Failed to check impersonation"}, status=500)
 
 
 @routes.get("/api/coverage/{node_id}")

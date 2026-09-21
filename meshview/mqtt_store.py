@@ -1,8 +1,9 @@
 import logging
 import re
 import time
+from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -11,11 +12,95 @@ from meshtastic.protobuf.config_pb2 import Config
 from meshtastic.protobuf.mesh_pb2 import HardwareModel
 from meshtastic.protobuf.portnums_pb2 import PortNum
 from meshview import decode_payload, mqtt_database
-from meshview.models import Node, NodePublicKey, Packet, PacketSeen, Traceroute
+from meshview.models import DailySnapshot, Node, Packet, PacketSeen, Traceroute
 
 logger = logging.getLogger(__name__)
 
 MQTT_GATEWAY_CACHE: set[int] = set()
+UNKNOWN_NODE_NAME = "unknown name"
+NODE_NAME_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+MQTT_DIRECT_NODE_ID = 1
+
+
+def normalize_node_name(name: str) -> str:
+    name = name.strip()
+    if not name or NODE_NAME_CONTROL_CHARS.search(name):
+        return UNKNOWN_NODE_NAME
+    return name
+
+
+def storage_packet_id(packet) -> int | None:
+    if packet.id:
+        return packet.id
+
+    if packet.decoded.portnum != PortNum.MAP_REPORT_APP:
+        return None
+
+    from_node_id = getattr(packet, "from", 0) or 0
+    now_us = int(time.time() * 1_000_000)
+    return -(now_us * 2048 + (from_node_id & 0x7FF))
+
+
+def storage_to_node_id(packet) -> int:
+    if packet.decoded.portnum == PortNum.MAP_REPORT_APP:
+        return MQTT_DIRECT_NODE_ID
+    return packet.to
+
+
+async def capture_daily_snapshot() -> None:
+    today = datetime.now(UTC).date()
+
+    async with mqtt_database.async_session() as session:
+        node_count = (await session.execute(select(func.count()).select_from(Node))).scalar_one()
+        packet_count = (
+            await session.execute(select(func.count()).select_from(Packet))
+        ).scalar_one()
+        gateway_count = (
+            await session.execute(
+                select(func.count()).select_from(Node).where(Node.is_mqtt_gateway.is_(True))
+            )
+        ).scalar_one()
+        captured_at_us = int(time.time() * 1_000_000)
+        values = {
+            "snapshot_date": today,
+            "node_count": node_count,
+            "packet_count": packet_count,
+            "gateway_count": gateway_count,
+            "captured_at_us": captured_at_us,
+        }
+
+        dialect = session.get_bind().dialect.name
+        stmt = None
+        if dialect == "sqlite":
+            stmt = (
+                sqlite_insert(DailySnapshot)
+                .values(**values)
+                .on_conflict_do_update(index_elements=["snapshot_date"], set_=values)
+            )
+        elif dialect == "postgresql":
+            stmt = (
+                pg_insert(DailySnapshot)
+                .values(**values)
+                .on_conflict_do_update(index_elements=["snapshot_date"], set_=values)
+            )
+
+        if stmt is not None:
+            await session.execute(stmt)
+        else:
+            snapshot = (
+                await session.execute(
+                    select(DailySnapshot).where(DailySnapshot.snapshot_date == today)
+                )
+            ).scalar_one_or_none()
+            if snapshot is None:
+                session.add(DailySnapshot(**values))
+            else:
+                snapshot.node_count = node_count
+                snapshot.packet_count = packet_count
+                snapshot.gateway_count = gateway_count
+                snapshot.captured_at_us = captured_at_us
+
+        await session.commit()
 
 
 async def process_envelope(topic, env):
@@ -52,7 +137,8 @@ async def process_envelope(topic, env):
                     node.short_name = map_report.short_name
                     node.hw_model = hw_model
                     node.role = role
-                    node.channel = env.channel_id
+                    if not node.channel:
+                        node.channel = env.channel_id
                     node.last_lat = map_report.latitude_i
                     node.last_long = map_report.longitude_i
                     node.firmware = map_report.firmware_version
@@ -80,20 +166,21 @@ async def process_envelope(topic, env):
 
             await session.commit()
 
-    if not env.packet.id:
+    packet_id = storage_packet_id(env.packet)
+    if packet_id is None:
         return
 
     async with mqtt_database.async_session() as session:
         # --- Packet insert with ON CONFLICT DO NOTHING
-        result = await session.execute(select(Packet).where(Packet.id == env.packet.id))
+        result = await session.execute(select(Packet).where(Packet.id == packet_id))
         packet = result.scalar_one_or_none()
         if not packet:
             now_us = int(time.time() * 1_000_000)
             packet_values = {
-                "id": env.packet.id,
+                "id": packet_id,
                 "portnum": env.packet.decoded.portnum,
                 "from_node_id": getattr(env.packet, "from"),
-                "to_node_id": env.packet.to,
+                "to_node_id": storage_to_node_id(env.packet),
                 "payload": env.packet.SerializeToString(),
                 "import_time_us": now_us,
                 "channel": env.channel_id,
@@ -124,7 +211,7 @@ async def process_envelope(topic, env):
                 except IntegrityError:
                     pass
 
-        # --- PacketSeen (no conflict handling here, normal insert)
+        # --- PacketSeen insert with conflict-safe handling
 
         if not env.gateway_id:
             print("WARNING: Missing gateway_id, skipping PacketSeen entry")
@@ -139,28 +226,43 @@ async def process_envelope(topic, env):
                 update(Node).where(Node.node_id == node_id).values(is_mqtt_gateway=True)
             )
 
-        result = await session.execute(
-            select(PacketSeen).where(
-                PacketSeen.packet_id == env.packet.id,
-                PacketSeen.node_id == node_id,
-                PacketSeen.rx_time == env.packet.rx_time,
+        now_us = int(time.time() * 1_000_000)
+        seen_values = {
+            "packet_id": packet_id,
+            "node_id": int(env.gateway_id[1:], 16),
+            "channel": env.channel_id,
+            "rx_time": env.packet.rx_time,
+            "rx_snr": env.packet.rx_snr,
+            "rx_rssi": env.packet.rx_rssi,
+            "hop_limit": env.packet.hop_limit,
+            "hop_start": env.packet.hop_start,
+            "topic": topic,
+            "import_time_us": now_us,
+        }
+        dialect = session.get_bind().dialect.name
+        seen_stmt = None
+        if dialect == "sqlite":
+            seen_stmt = (
+                sqlite_insert(PacketSeen)
+                .values(**seen_values)
+                .on_conflict_do_nothing(index_elements=["packet_id", "node_id", "rx_time"])
             )
-        )
-        if not result.scalar_one_or_none():
-            now_us = int(time.time() * 1_000_000)
-            seen = PacketSeen(
-                packet_id=env.packet.id,
-                node_id=int(env.gateway_id[1:], 16),
-                channel=env.channel_id,
-                rx_time=env.packet.rx_time,
-                rx_snr=env.packet.rx_snr,
-                rx_rssi=env.packet.rx_rssi,
-                hop_limit=env.packet.hop_limit,
-                hop_start=env.packet.hop_start,
-                topic=topic,
-                import_time_us=now_us,
+        elif dialect == "postgresql":
+            seen_stmt = (
+                pg_insert(PacketSeen)
+                .values(**seen_values)
+                .on_conflict_do_nothing(index_elements=["packet_id", "node_id", "rx_time"])
             )
-            session.add(seen)
+
+        if seen_stmt is not None:
+            await session.execute(seen_stmt)
+        else:
+            try:
+                async with session.begin_nested():
+                    session.add(PacketSeen(**seen_values))
+                    await session.flush()
+            except IntegrityError:
+                pass
 
         # --- NODEINFO_APP handling
         if env.packet.decoded.portnum == PortNum.NODEINFO_APP:
@@ -172,7 +274,12 @@ async def process_envelope(topic, env):
                     if user.id[0] == "!" and re.fullmatch(r"[0-9a-fA-F]+", user.id[1:]):
                         node_id = int(user.id[1:], 16)
                     else:
-                        node_id = None
+                        logger.warning(
+                            "Skipping NODEINFO_APP packet %s: unable to determine node_id",
+                            env.packet.id,
+                        )
+                        await session.commit()
+                        return
 
                     hw_model = (
                         HardwareModel.Name(user.hw_model)
@@ -190,11 +297,13 @@ async def process_envelope(topic, env):
                     ).scalar_one_or_none()
 
                     now_us = int(time.time() * 1_000_000)
+                    long_name = normalize_node_name(user.long_name)
+                    short_name = normalize_node_name(user.short_name)
 
                     if node:
                         node.node_id = node_id
-                        node.long_name = user.long_name
-                        node.short_name = user.short_name
+                        node.long_name = long_name
+                        node.short_name = short_name
                         node.hw_model = hw_model
                         node.role = role
                         node.channel = env.channel_id
@@ -205,8 +314,8 @@ async def process_envelope(topic, env):
                         node = Node(
                             id=user.id,
                             node_id=node_id,
-                            long_name=user.long_name,
-                            short_name=user.short_name,
+                            long_name=long_name,
+                            short_name=short_name,
                             hw_model=hw_model,
                             role=role,
                             channel=env.channel_id,
@@ -215,27 +324,6 @@ async def process_envelope(topic, env):
                         )
                         session.add(node)
 
-                    if user.public_key:
-                        public_key_hex = user.public_key.hex()
-                        existing_key = (
-                            await session.execute(
-                                select(NodePublicKey).where(
-                                    NodePublicKey.node_id == node_id,
-                                    NodePublicKey.public_key == public_key_hex,
-                                )
-                            )
-                        ).scalar_one_or_none()
-
-                        if existing_key:
-                            existing_key.last_seen_us = now_us
-                        else:
-                            new_key = NodePublicKey(
-                                node_id=node_id,
-                                public_key=public_key_hex,
-                                first_seen_us=now_us,
-                                last_seen_us=now_us,
-                            )
-                            session.add(new_key)
             except Exception as e:
                 print(f"Error processing NODEINFO_APP: {e}")
 

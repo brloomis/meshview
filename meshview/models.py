@@ -1,4 +1,6 @@
-from sqlalchemy import BigInteger, ForeignKey, Index, desc
+from datetime import date
+
+from sqlalchemy import BigInteger, Date, ForeignKey, Index, desc
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -106,16 +108,11 @@ class Traceroute(Base):
     )
 
 
-class NodePublicKey(Base):
-    __tablename__ = "node_public_key"
+class DailySnapshot(Base):
+    __tablename__ = "daily_snapshot"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    node_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    public_key: Mapped[str] = mapped_column(nullable=False)
-    first_seen_us: Mapped[int] = mapped_column(BigInteger, nullable=True)
-    last_seen_us: Mapped[int] = mapped_column(BigInteger, nullable=True)
-
-    __table_args__ = (
-        Index("idx_node_public_key_node_id", "node_id"),
-        Index("idx_node_public_key_public_key", "public_key"),
-    )
+    snapshot_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    node_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    packet_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    gateway_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    captured_at_us: Mapped[int] = mapped_column(BigInteger, nullable=False)

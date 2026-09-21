@@ -18,21 +18,23 @@
 
 /* --- Node Info --- */
 .node-info {
-    background-color: #1f2226;
-    border: 1px solid #3a3f44;
     color: #ddd;
     font-size: 0.88rem;
-    padding: 12px 14px;
     margin-bottom: 14px;
-    border-radius: 8px;
-
     display: grid;
     grid-template-columns: repeat(3, minmax(120px, 1fr));
-    grid-column-gap: 14px;
-    grid-row-gap: 6px;
+    grid-column-gap: 12px;
+    grid-row-gap: 12px;
 }
 
-.node-info div { padding: 2px 0; }
+.node-info-col {
+    background-color: #1f2226;
+    border: 1px solid #3a3f44;
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+
+.node-info-col div { padding: 2px 0; }
 .node-info strong {
     color: #9fd4ff;
     font-weight: 600;
@@ -294,32 +296,6 @@
     color:#fff;
 }
 
-/* --- Impersonation Warning --- */
-.impersonation-warning {
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.4);
-    border-radius: 8px;
-    padding: 12px 16px;
-    margin-bottom: 14px;
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-}
-.impersonation-warning .warning-icon {
-    font-size: 1.2rem;
-}
-.impersonation-warning .warning-content {
-    flex: 1;
-}
-.impersonation-warning .warning-title {
-    color: #f87171;
-    font-weight: bold;
-    margin-bottom: 4px;
-}
-.impersonation-warning .warning-text {
-    font-size: 0.85rem;
-    color: #ccc;
-}
 {% endblock %}
 
 {% block body %}
@@ -338,6 +314,9 @@
         <button onclick="showQrCode()" id="showQrBtn">
             <span>🔳</span> <span data-translate-lang="show_qr_code">Show QR Code</span>
         </button>
+        <button onclick="openReachReport()" id="reachReportBtn">
+            <span>📈</span> <span>Reliability</span>
+        </button>
         <button onclick="toggleCoverage()" id="toggleCoverageBtn" disabled title="Location required for coverage">
             <span>📡</span> <span data-translate-lang="toggle_coverage">Predicted Coverage</span>
         </button>
@@ -346,42 +325,34 @@
         </a>
     </div>
 
-    <!-- Impersonation Warning -->
-    <div id="impersonationWarning" class="impersonation-warning" style="display:none;">
-        <span class="warning-icon">⚠️</span>
-        <div class="warning-content">
-            <div class="warning-title" data-translate-lang="potential_impersonation">Potential Impersonation Detected</div>
-            <div class="warning-text" id="impersonationText"></div>
-        </div>
-    </div>
-
     <!-- Node Info -->
     <div id="node-info" class="node-info">
-        <div><strong data-translate-lang="node_id">Node ID</strong><strong>: </strong><span id="info-node-id">—</span></div>
-        <div><strong data-translate-lang="id">Hex ID</strong><strong>: </strong><span id="info-id">—</span></div>
-        <div><strong data-translate-lang="long_name">Long Name</strong><strong>: </strong> <span id="info-long-name">—</span></div>
-        <div><strong data-translate-lang="short_name">Short Name</strong><strong>: </strong> <span id="info-short-name">—</span></div>
-
-        <div><strong data-translate-lang="hw_model">Hardware Model</strong><strong>: </strong> <span id="info-hw-model">—</span></div>
-        <div><strong data-translate-lang="firmware">Firmware</strong><strong>: </strong> <span id="info-firmware">—</span></div>
-        <div><strong data-translate-lang="role">Role</strong><strong>: </strong> <span id="info-role">—</span></div>
-
-        <div><strong data-translate-lang="mqtt_gateway">MQTT Gateway</strong><strong>: </strong> <span id="info-mqtt-gateway">—</span></div>
-        <div><strong data-translate-lang="channel">Channel</strong><strong>: </strong> <span id="info-channel">—</span></div>
-        <div><strong data-translate-lang="latitude">Latitude</strong><strong>: </strong> <span id="info-lat">—</span></div>
-        <div><strong data-translate-lang="longitude">Longitude</strong><strong>: </strong> <span id="info-lon">—</span></div>
-
-        <div><strong data-translate-lang="first_update">First Update</strong><strong>: </strong> <span id="info-first-update">—</span></div>
-        <div><strong data-translate-lang="last_update">Last Update</strong><strong>: </strong> <span id="info-last-update">—</span></div>
-        <div>
-            <strong data-translate-lang="statistics">Statistics</strong><strong>: </strong>
-            <span id="info-stats"
-                  data-label-24h="24h"
-                  data-label-sent="Packets sent"
-                  data-label-seen="Times seen">—</span>
+        <div class="node-info-col">
+            <div><strong data-translate-lang="node_id">Node ID</strong><strong>: </strong><span id="info-node-id">—</span></div>
+            <div><strong data-translate-lang="id">Hex ID</strong><strong>: </strong><span id="info-id">—</span></div>
+            <div><strong data-translate-lang="short_name">Short Name</strong><strong>: </strong> <span id="info-short-name">—</span></div>
+            <div><strong data-translate-lang="long_name">Long Name</strong><strong>: </strong> <span id="info-long-name">—</span></div>
+            <div><strong data-translate-lang="channel">Channel</strong><strong>: </strong> <span id="info-channel">—</span></div>
         </div>
-
-
+        <div class="node-info-col">
+            <div><strong data-translate-lang="latitude">Latitude</strong><strong>: </strong> <span id="info-lat">—</span></div>
+            <div><strong data-translate-lang="longitude">Longitude</strong><strong>: </strong> <span id="info-lon">—</span></div>
+            <div><strong data-translate-lang="role">Role</strong><strong>: </strong> <span id="info-role">—</span></div>
+            <div><strong data-translate-lang="hw_model">Hardware Model</strong><strong>: </strong> <span id="info-hw-model">—</span></div>
+            <div><strong data-translate-lang="mqtt_gateway">MQTT Gateway</strong><strong>: </strong> <span id="info-mqtt-gateway">—</span></div>
+        </div>
+        <div class="node-info-col">
+            <div><strong data-translate-lang="first_update">First Update</strong><strong>: </strong> <span id="info-first-update">—</span></div>
+            <div><strong data-translate-lang="last_update">Last Update</strong><strong>: </strong> <span id="info-last-update">—</span></div>
+            <div><strong data-translate-lang="firmware">Firmware</strong><strong>: </strong> <span id="info-firmware">—</span></div>
+            <div>
+                <strong data-translate-lang="statistics">Statistics</strong><strong>: </strong>
+                <span id="info-stats"
+                      data-label-24h="24h"
+                      data-label-sent="Packets sent"
+                      data-label-seen="Times seen">—</span>
+            </div>
+        </div>
     </div>
 
     <!-- Map. -->
@@ -822,6 +793,11 @@ function initMap(){
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution:'&copy; OpenStreetMap'
     }).addTo(map);
+    L.control.scale({
+        position: 'bottomleft',
+        metric: true,
+        imperial: true
+    }).addTo(map);
 }
 
 async function toggleCoverage() {
@@ -1095,18 +1071,24 @@ async function loadPackets(filters = {}) {
             const match = pkt.payload?.match(/ID:\s*(\d+)/i);
             if (match) traceId = match[1];
             inlineLinks +=
-                ` <a class="inline-link" href="/graph/traceroute/${traceId}" target="_blank">⮕</a>`;
+                ` <a class="inline-link" href="/traceroute/${traceId}" target="_blank">⮕</a>`;
         }
 
         const sizeBytes = packetSizeBytes(pkt);
+        const packetIdCell = pkt.packet_id
+            ? `<a href="/packet/${pkt.storage_id || pkt.id}"
+                  style="text-decoration:underline; color:inherit;">
+                   ${pkt.packet_id}
+               </a>`
+            : pkt.portnum === 73
+            ? `<span class="text-secondary" title="MQTT map report">Not a Packet</span>`
+            : `<span class="text-secondary" title="No Meshtastic packet ID">—</span>`;
 
         list.insertAdjacentHTML("afterbegin", `
         <tr class="packet-row">
             <td>${localTime}</td>
             <td><span class="toggle-btn">▶</span>
-                <a href="/packet/${pkt.id}" style="text-decoration:underline; color:inherit;">
-                    ${pkt.id}
-                </a>
+                ${packetIdCell}
             </td>
             <td>${fromCell}</td>
             <td>${toCell}</td>
@@ -1447,13 +1429,20 @@ async function loadPacketHistogram() {
     const DAYS = 7;
     const now = new Date();
 
+    const dayKeyFromDate = (d) => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+    };
+
     const dayKeys = [];
     const dayLabels = [];
 
     for (let i = DAYS - 1; i >= 0; i--) {
         const d = new Date(now);
         d.setDate(d.getDate() - i);
-        dayKeys.push(d.toISOString().slice(0, 10));
+        dayKeys.push(dayKeyFromDate(d));
         dayLabels.push(
             d.toLocaleDateString([], { month: "short", day: "numeric" })
         );
@@ -1481,9 +1470,7 @@ async function loadPacketHistogram() {
     for (const pkt of packets) {
         if (!pkt.import_time_us) continue;
 
-        const day = new Date(pkt.import_time_us / 1000)
-            .toISOString()
-            .slice(0, 10);
+        const day = dayKeyFromDate(new Date(pkt.import_time_us / 1000));
 
         if (!dayKeys.includes(day)) continue;
 
@@ -1621,8 +1608,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     requestAnimationFrame(async () => {
         await loadNodeInfo();
 
-        // Load QR code URL and impersonation check
-        await loadNodeQrAndImpersonation();
+        await loadNodeQr();
 
         // ✅ MAP MUST EXIST FIRST
         if (!map) initMap();
@@ -1726,6 +1712,7 @@ async function loadNodeStats(nodeId) {
             : "";
 
         const portName = PORT_LABEL_MAP[pkt.portnum] || `Port ${pkt.portnum}`;
+        const displayPacketId = pkt.packet_id || (pkt.portnum === 73 ? "Not a Packet" : "");
 
         // Escape quotes + line breaks for CSV safety
         const payload = (pkt.payload || "")
@@ -1734,7 +1721,7 @@ async function loadNodeStats(nodeId) {
 
         rows.push([
             time,
-            pkt.id,
+            displayPacketId,
             pkt.from_node_id,
             pkt.to_node_id,
             pkt.portnum,
@@ -1758,16 +1745,11 @@ async function loadNodeStats(nodeId) {
 
 let currentMeshtasticUrl = "";
 
-async function loadNodeQrAndImpersonation() {
+async function loadNodeQr() {
     const actionsDiv = document.getElementById("nodeActions");
-    const warningDiv = document.getElementById("impersonationWarning");
 
     try {
-        const [qrRes, impRes] = await Promise.all([
-            fetch(`/api/node/${fromNodeId}/qr`),
-            fetch(`/api/node/${fromNodeId}/impersonation-check`)
-        ]);
-
+        const qrRes = await fetch(`/api/node/${fromNodeId}/qr`);
         const qrData = await qrRes.json();
         if (qrRes.ok && qrData.meshtastic_url) {
             currentMeshtasticUrl = qrData.meshtastic_url;
@@ -1775,19 +1757,9 @@ async function loadNodeQrAndImpersonation() {
         } else {
             actionsDiv.style.display = "none";
         }
-
-        const impData = await impRes.json();
-        if (impRes.ok && impData.potential_impersonation) {
-            warningDiv.style.display = "flex";
-            document.getElementById("impersonationText").textContent =
-                impData.warning || `This node has sent ${impData.unique_public_key_count} different public keys. This could indicate impersonation.`;
-        } else {
-            warningDiv.style.display = "none";
-        }
     } catch (err) {
-        console.error("Failed to load QR/impersonation data:", err);
+        console.error("Failed to load QR data:", err);
         actionsDiv.style.display = "none";
-        warningDiv.style.display = "none";
     }
 }
 
@@ -1820,6 +1792,11 @@ function showQrCode() {
     generateQrCode(currentMeshtasticUrl);
 
     document.getElementById("qrModal").style.display = "flex";
+}
+
+function openReachReport() {
+    if (!fromNodeId) return;
+    window.location.href = `/reliability?node_id=${encodeURIComponent(fromNodeId)}`;
 }
 
 function closeQrModal() {
