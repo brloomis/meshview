@@ -4,6 +4,64 @@
 
 The project serves as a real-time monitoring and diagnostic tool for the Meshtastic mesh network. It provides detailed insights into network activity, including message traffic, node positions, and telemetry data.
 
+### Version 4.0.0 — November 2026
+
+- Interface: redesigned the dashboard, maps, chat, node directory, packet inspector, and reports, with a shared day/night theme and improved mobile layouts.
+- Maps: added a searchable node explorer, node inspector with telemetry and recent packets, and a live traffic list. The kiosk page now opens the fullscreen live map.
+- Statistics: added top text senders on their recorded main channel and the highest routers by altitude, with CSV exports. The router map uses red markers and an editable minimum altitude, defaulting to **500 m above sea level**.
+- Node data: store the latest reported altitude from position packets and map reports, preserve it when omitted, and display it in the node directory and node details. Added a packet index to speed up node packet lookups.
+- Translations: expanded English, Spanish, and Russian coverage across pages, reports, map layers, controls, and the API reference. Missing translation keys fall back to English. See [the translation guide](docs/Translations.md).
+- Browser assets: serve pinned JavaScript and CSS libraries locally, including Leaflet, ECharts, Bootstrap, and QRCode.js, instead of loading them from CDNs. Map tiles still require access to their providers.
+- Reliability and privacy: improved handling of malformed packets, unknown protobuf enums, invalid numeric API parameters, and secondary MQTT decryption keys; bounded traceroute rendering; escaped chart and telemetry content; and hardened CSV exports.
+- Meshtastic and API: refreshed the protobuf definitions, included available public keys in shared-contact QR codes, and updated the API documentation and generated browser reference.
+- Contributors: thanks to Nathan ([nullrouten0](https://github.com/nullrouten0)) for packet handling, security, CSV export, API validation, logging, and traceroute improvements ([#176](https://github.com/pablorevilla-meshtastic/meshview/pull/176)–[#182](https://github.com/pablorevilla-meshtastic/meshview/pull/182)), and Mike Benner for shared-contact public-key support ([#185](https://github.com/pablorevilla-meshtastic/meshview/pull/185)) and the Leaflet heatmap compatibility fix ([#188](https://github.com/pablorevilla-meshtastic/meshview/pull/188)).
+
+**Upgrading:** Back up your database, update the application and dependencies, then restart both the database writer and web server (or use `mvrun.py`). The writer applies the new altitude-column and packet-index migrations automatically. Reload browser pages to load the updated assets. See [the migration guide](docs/Database-Changes-With-Alembic.md) and [Docker instructions](README-Docker.md) for your installation.
+
+### Version 3.0.9.1 — November 4, 2026 — Out-of-band map fix
+
+This out-of-band update fixes maps failing to load after an upstream `leaflet.heat`
+release changed the JavaScript format served by the unversioned CDN URL. The browser
+could no longer load the plugin, leaving the map blank and breaking the heatmap page.
+
+- Pin `leaflet.heat` to the compatible `0.2.0` release on the map, node, and heatmap pages, with an integrity hash to verify the downloaded script ([PR #188](https://github.com/pablorevilla-meshtastic/meshview/pull/188)).
+- This patch contains the map dependency fix and version metadata updates; no database migration or configuration changes are required.
+- Docker installations must pull the updated image and recreate the container to apply the fix; restarting the existing container alone does not update its image.
+
+### Version 3.0.9 — October 2026
+
+- Live map: added animated packet traces from senders to reporting gateways and configurable channel colors through the optional `[map_channel_colors]` section in `config.ini`.
+- Daily snapshots: new snapshots report activity for the previous complete UTC day, including newly imported packets, unique packet senders observed that day, and gateways that reported packets that day. Existing historical snapshots keep their original counts.
+- Node tracking: record nodes from packet activity before their node information arrives, and preserve known positions when map reports have missing or invalid coordinates.
+- Neighbor SNR chart: show the last seven days and the 15 neighbors with the most data points, distinguish neighbors with identical short names, and fix CSV export.
+- MQTT reliability: skip malformed messages and invalid node IDs without stopping packet ingestion.
+- Security and privacy: escape mesh-provided text in web pages, restrict language and static file requests to their intended directories, and prevent payload searches from matching redacted direct messages.
+- Coverage API: validate and bound request parameters, and run coverage calculations off the event loop to keep the web server responsive.
+- Contributors: thanks to [nullrouten0](https://github.com/nullrouten0) and Nathan for the neighbor SNR chart, MQTT reliability, security, privacy, and coverage API fixes; Manuel Villaverde for improving map channel color visibility; and [Pablo Revilla](https://github.com/pablorevilla-meshtastic) for the live map, node tracking, and daily snapshot updates.
+
+#### Updating your configuration for 3.0.9
+
+Add the following section at the end of your existing `config.ini` to use these map channel colors.
+If `[map_channel_colors]` already exists, update that section instead of adding a duplicate.
+
+```ini
+# Map channel color overrides. Use six-digit hex colors; other channels get generated colors.
+# Names ignore case, spaces, hyphens, and underscores. Restart the web server after editing.
+[map_channel_colors]
+LongFast = #4363d8
+LongSlow = #000075
+VeryLongSlow = #808000
+MediumSlow = #008080
+MediumFast = #e6194b
+ShortSlow = #911eb4
+ShortFast = #f58231
+LongModerate = #46f0f0
+ShortTurbo = #f032e6
+```
+
+Restart the web server and reload the map after saving. This section is optional;
+channels without an override use generated colors.
+
 ### Version 3.0.8 — September 2026
 - Map updates: added OpenTopoMap as a selectable base map, improved map controls, and fixed several map/node display edge cases.
 - Traceroute: added a dedicated traceroute page, corrected route path orientation in graph edges, and improved traceroute API/documentation support.
@@ -22,10 +80,7 @@ The project serves as a real-time monitoring and diagnostic tool for the Meshtas
 - Tooling: improved the protobuf updater so it supports raw commit SHAs, the newer upstream `meshtastic/*.proto` layout, generated `.pyi` stubs, and the vendored `nanopb`/`serial_hal` outputs.
 
 ### Version 3.0.6 — March 2026
-- Daily snapshots: added the `daily_snapshot` table, scheduled snapshot capture, and `/api/snapshots/daily` for historical node, packet, and gateway counts.
-  Each new snapshot stores packets imported during the previous complete UTC day,
-  labeled with that day's date. Node and gateway counts are database totals at capture
-  time. Existing historical snapshots retain their previously stored packet totals.
+- Daily snapshots: added the `daily_snapshot` table, scheduled snapshot capture, and `/api/snapshots/daily` for historical node, packet, and gateway counts. These originally stored database totals; version 3.0.9 changes new snapshots to daily activity counts.
 - Stats/UI: expanded stats views with snapshot data and added channel filters to Chat and Firehose.
 - Map/node fixes: corrected node location handling, map popup behavior, packet page display, and node list sorting.
 - Ingestion/API reliability: improved duplicate `PacketSeen` handling, guarded invalid node info packets, and made traceroute/edge APIs more tolerant of decode failures.
@@ -123,7 +178,7 @@ See [README-Docker.md](README-Docker.md) for container deployment and [docs/](do
 
 * **Packet Analysis**: Detailed information on individual data packets transmitted within the network can be accessed, including payload content and transmission paths.
 
-* **Node Statistics**: Users can explore statistics related to network traffic, such as top contributors and message volumes.
+* **Node Statistics**: Users can explore statistics related to network traffic, such as top contributors and message volumes. The highest-router map includes a minimum-altitude field (default 500 m above sea level) that immediately filters the top 50 routers shown.
 
 Samples of currently running instances:
 
@@ -286,9 +341,6 @@ title = Bay Area Mesh
 # A brief message shown on the homepage.
 message = Real time data from around the bay area and beyond.
 
-# Starting URL when loading the index page.
-starting = /chat
-
 # Enable or disable site features (as strings: "True" or "False").
 nodes = True
 conversations = True
@@ -298,6 +350,8 @@ stats = True
 net = True
 map = True
 top = True
+# Show the API documentation link in the navigation bar (default: True).
+api = True
 
 # Map boundaries (used for the map view).
 # Defaults will show the San Francisco Bay Area
@@ -693,3 +747,10 @@ Check the log file to see it the script run at the specific time.
 ## Technical Documentation
 
 For more detailed technical documentation including database migrations, architecture details, and advanced topics, see the [docs/](docs/) directory.
+
+### Fullscreen kiosk map
+
+Open `/static/kiosk.html` or `/map?kiosk=1` for a fullscreen live map without the
+site header or footer. Kiosk mode shares the live map's layers, channel filters,
+packet activity, and compact node inspector. Map position parameters (`lat`, `lng`,
+and `zoom`) also work with kiosk mode.

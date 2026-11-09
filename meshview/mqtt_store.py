@@ -1,4 +1,5 @@
 import logging
+import math
 import re
 import time
 from datetime import UTC, datetime, timedelta
@@ -44,7 +45,8 @@ def parse_node_id(value: str | None) -> int | None:
 
 
 def has_valid_location(lat: int | None, lon: int | None) -> bool:
-    return lat is not None and lon is not None and abs(lat) > 1 and abs(lon) > 1
+    """Exclude the box within one degree of (0, 0); coordinates use 1e-7 degrees."""
+    return lat is not None and lon is not None and (abs(lat) > 10_000_000 or abs(lon) > 10_000_000)
 
 
 def node_user_id(node_id: int) -> str:
@@ -110,7 +112,7 @@ async def ensure_node_exists(session, node_id: int | None, channel: str | None) 
 
 
 async def capture_daily_snapshot() -> None:
-    """Record packet traffic for the previous complete UTC day."""
+    """Record packet traffic and active nodes/gateways for the previous UTC day."""
     day_end = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     day_start = day_end - timedelta(days=1)
     start_us = int(day_start.timestamp() * 1_000_000)
@@ -118,7 +120,21 @@ async def capture_daily_snapshot() -> None:
     snapshot_date = day_start.date()
 
     async with mqtt_database.async_session() as session:
-        node_count = (await session.execute(select(func.count()).select_from(Node))).scalar_one()
+        # Include repeated observations of older packets as activity, too. Node.last_seen_us
+        # cannot answer this after a node has already been seen on the following day.
+        active_nodes = (
+            select(Packet.from_node_id)
+            .where(Packet.import_time_us >= start_us, Packet.import_time_us < end_us)
+            .union(
+                select(Packet.from_node_id)
+                .join(PacketSeen, PacketSeen.packet_id == Packet.id)
+                .where(PacketSeen.import_time_us >= start_us, PacketSeen.import_time_us < end_us)
+            )
+            .subquery()
+        )
+        node_count = (
+            await session.execute(select(func.count(active_nodes.c.from_node_id)))
+        ).scalar_one()
         packet_count = (
             await session.execute(
                 select(func.count())
@@ -128,7 +144,9 @@ async def capture_daily_snapshot() -> None:
         ).scalar_one()
         gateway_count = (
             await session.execute(
-                select(func.count()).select_from(Node).where(Node.is_mqtt_gateway.is_(True))
+                select(func.count(func.distinct(PacketSeen.node_id))).where(
+                    PacketSeen.import_time_us >= start_us, PacketSeen.import_time_us < end_us
+                )
             )
         ).scalar_one()
         captured_at_us = int(time.time() * 1_000_000)
@@ -186,16 +204,8 @@ async def process_envelope(topic, env):
 
         async with mqtt_database.async_session() as session:
             try:
-                hw_model = (
-                    HardwareModel.Name(map_report.hw_model)
-                    if hasattr(HardwareModel, "Name")
-                    else "unknown"
-                )
-                role = (
-                    Config.DeviceConfig.Role.Name(map_report.role)
-                    if hasattr(Config.DeviceConfig.Role, "Name")
-                    else "unknown"
-                )
+                hw_model = decode_payload.enum_name(HardwareModel, map_report.hw_model)
+                role = decode_payload.enum_name(Config.DeviceConfig.Role, map_report.role)
                 node = (
                     await session.execute(select(Node).where(Node.node_id == node_id))
                 ).scalar_one_or_none()
@@ -214,6 +224,9 @@ async def process_envelope(topic, env):
                     if has_location:
                         node.last_lat = map_report.latitude_i
                         node.last_long = map_report.longitude_i
+                        # MapReport has no presence flag for altitude.
+                        if map_report.altitude != 0:
+                            node.last_altitude = map_report.altitude
                     node.firmware = map_report.firmware_version
                     node.last_seen_us = now_us
                     if node.first_seen_us is None:
@@ -234,6 +247,9 @@ async def process_envelope(topic, env):
                     if has_location:
                         node.last_lat = map_report.latitude_i
                         node.last_long = map_report.longitude_i
+                        # MapReport has no presence flag for altitude.
+                        if map_report.altitude != 0:
+                            node.last_altitude = map_report.altitude
                     session.add(node)
             except Exception as e:
                 print(f"Error processing MAP_REPORT_APP: {e}")
@@ -310,7 +326,8 @@ async def process_envelope(topic, env):
             "node_id": gateway_node_id,
             "channel": env.channel_id,
             "rx_time": env.packet.rx_time,
-            "rx_snr": env.packet.rx_snr,
+            # JSON cannot carry inf/nan, and they are not real SNR readings.
+            "rx_snr": env.packet.rx_snr if math.isfinite(env.packet.rx_snr) else None,
             "rx_rssi": env.packet.rx_rssi,
             "hop_limit": env.packet.hop_limit,
             "hop_start": env.packet.hop_start,
@@ -358,16 +375,8 @@ async def process_envelope(topic, env):
                         await session.commit()
                         return
 
-                    hw_model = (
-                        HardwareModel.Name(user.hw_model)
-                        if user.hw_model in HardwareModel.values()
-                        else f"unknown({user.hw_model})"
-                    )
-                    role = (
-                        Config.DeviceConfig.Role.Name(user.role)
-                        if hasattr(Config.DeviceConfig.Role, "Name")
-                        else "unknown"
-                    )
+                    hw_model = decode_payload.enum_name(HardwareModel, user.hw_model)
+                    role = decode_payload.enum_name(Config.DeviceConfig.Role, user.role)
 
                     node = (
                         await session.execute(select(Node).where(Node.id == user.id))
@@ -424,6 +433,8 @@ async def process_envelope(topic, env):
                     now_us = int(time.time() * 1_000_000)
                     node.last_lat = position.latitude_i
                     node.last_long = position.longitude_i
+                    if position.HasField("altitude"):
+                        node.last_altitude = position.altitude
                     node.last_seen_us = now_us
                     if node.first_seen_us is None:
                         node.first_seen_us = now_us
